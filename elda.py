@@ -3,6 +3,8 @@
 import math
 import time
 import operator as op
+import inspect
+import random
 
 import kurt
 
@@ -15,16 +17,30 @@ class Interpreter(object):
 
     def __init__(self, project):
         self.project = project
+        project.interpreter = self
+        for scriptable in [self.project.stage] + self.project.sprites:
+            self.augment(scriptable)
         self.stop()
+
+    def augment(self, scriptable):
+        if isinstance(scriptable, kurt.Sprite):
+            scriptable.speech_bubble = None
+            scriptable.last_speech_bubble = None
+
+    # Threads
 
     def start(self):
         """Trigger green flag scripts."""
         self.stop()
-        self.start_time = None
+        reset_timer(self)
         for scriptable in [self.project.stage] + self.project.sprites:
             for script in scriptable.scripts:
                 if script.blocks[0].type.has_command("whenGreenFlag"):
-                    push_script(scriptable, script[1:])
+                    self.push_script(scriptable, script[1:])
+
+    def push_script(self, s, script):
+        if script not in self.threads:
+            self.threads.append(self.run_script(s, script))
 
     def tick(self):
         """Execute one frame of the interpreter.
@@ -32,51 +48,90 @@ class Interpreter(object):
         Don't call more than 40 times per second.
 
         """
-        self.start_time = self.start_time or time.time()
-        self.project.timer = time.time() - self.start_time
-        for scriptable in [self.project.stage] + self.project.sprites:
-            for thread in scriptable.threads:
-                try:
-                    thread.next()
-                except StopIteration:
-                    scriptable.threads.remove(thread)
- 
+        for thread in self.threads:
+            try:
+                event = True
+                while event:
+                    event = thread.next()
+                    if event:
+                        yield event
+            except StopIteration:
+                self.threads.remove(thread)
+
     def stop(self):
         """Stop running threads."""
-        for s in [self.project.stage] + self.project.sprites:
-            s.threads = []
+        self.threads = []
+
+    # Scripts
+
+    def run_script(self, s, script):
+        for block in script:
+            for x in self.evaluate(s, block):
+                yield x
+
+    def evaluate(self, s, value, insert=None):
+        assert not isinstance(value, kurt.Script)
+        if isinstance(value, kurt.Block):
+            f = Interpreter.COMMANDS[value.type]
+            args = [self.evaluate(s, arg, insert)
+                    for (arg, insert) in zip(value.args, value.type.inserts)]
+            result = f(s, *args)
+
+            def flatten_generators(gen):
+                for item in gen:
+                    if inspect.isgenerator(item):
+                        for x in flatten_generators(item):
+                            yield x
+                    else:
+                        yield item
+            if inspect.isgenerator(result):
+                result = flatten_generators(result)
+
+            if result is None:
+                result = []
+            return result
+        else: # float, unicode, list
+            return value
 
 
 
-#-- Scripts --#
+#-- Screen --#
 
-def evaluate(s, value, insert=None):
-    assert not isinstance(value, kurt.Script)
-    if isinstance(value, kurt.Block):
-        f = Interpreter.COMMANDS[value.type]
-        args = [evaluate(s, arg, insert)
-                for (arg, insert) in zip(value.args, value.type.inserts)]
-        result = f(s, *args)
-        if result is None:
-            result = []
-        return result
-    else: # float, unicode, list
-        return value
+class Event(object):
+    def __init__(self, scriptable, kind, value):
+        self.scriptable = scriptable
+        self.kind = kind
+        self.value = value
 
-def push_script(s, script):
-    if script not in s.threads:
-        s.threads.append(run_script(s, script))
+    def __repr__(self):
+        return "Event(%r, %r, %r)" % (self.scriptable, self.kind, self.value)
 
-def run_script(s, script):
-    for block in script:
-        for x in evaluate(s, block):
-            yield
+    def __unicode__(self):
+        return "%s: %s %r" % (self.scriptable.name, self.kind, self.value)
 
-def run(p):
-    elda = Interpreter(p)
-    elda.start()
-    while 1:
-        elda.tick(time.time())
+class IScreen(object):
+    pass
+
+class ConsoleScreen(object):
+    def set_project(self, project):
+        self.project = project
+        self.interpreter = Interpreter(project)
+
+    def tick(self):
+        for event in self.interpreter.tick():
+            if event.kind in ('say', 'think'):
+                print unicode(event)
+            else:
+                print event
+
+    @classmethod
+    def run(cls, project):
+        """Run the project until all the scripts die."""
+        scr = cls()
+        scr.set_project(project)
+        scr.interpreter.start()
+        while scr.interpreter.threads:
+            scr.tick()
 
 
 
@@ -84,6 +139,7 @@ def run(p):
 
 # def block(s, *args):
 # :param s: the Scriptable the block is evaluated on
+# Must be return an iterable (ie. a generator) or None
 
 def command(bt):
     def decorator(func, bt=bt):
@@ -113,7 +169,23 @@ operator(">", op.gt)
 
 @command("say")
 def say(s, message):
-    print message
+    yield Event(s, "say", message)
+
+@command("say for secs")
+def say_for_secs(s, message, secs):
+    yield say(s, message)
+    yield wait(s, secs)
+    yield say(s, None)
+
+@command("think")
+def think(s, message):
+    yield Event(s, "think", message)
+
+@command("think for secs")
+def think_for_secs(s, message, secs):
+    yield think(s, message)
+    yield wait(s, secs)
+    yield think(s, None)
 
 @command("wait secs")
 def wait(s, secs):
@@ -124,32 +196,65 @@ def wait(s, secs):
 @command("forever")
 def forever(s, blocks):
     while 1:
-        for x in run_script(s, blocks):
-            yield
+        yield s.project.interpreter.run_script(s, blocks)
         yield
 
 @command("repeat")
 def repeat(s, times, blocks):
     times = int(math.ceil(times))
     for i in range(times):
-        for x in run_script(s, blocks):
-            yield
+        yield s.project.interpreter.run_script(s, blocks)
         yield
 
 @command("broadcast")
 def broadcast(s, message):
-    for s in [scriptable.project.stage] + scriptable.project.sprites:
+    for s in [s.project.stage] + s.project.sprites:
         for script in s.scripts:
             if script.blocks[0].type.has_command("whenIReceive"):
-                push_script(s, script[1:])
+                s.project.interpreter.push_script(s, script[1:])
+
+@command("reset timer")
+def reset_timer(s):
+    s.project.interpreter.timer_start = time.time()
 
 @command("timer")
 def timer(s):
-    return s.project.timer
+    return time.time() - s.project.interpreter.timer_start
+
+@command("if")
+def if_(s, condition, body):
+    if condition:
+        yield run_script(body)
+
+@command("if else")
+def if_else(s, condition, body, other_body):
+    yield run_script(body if condition else other_body)
+
+
 
 #-- Test --#
 
+blocks_todo = set()
+for block in kurt.plugin.Kurt.get_plugin('scratch14').blocks:
+#for block in kurt.plugin.Kurt.blocks:
+#    for translation in block.translations:
+#        if 'obsolete' in block.translate().category:
+    if block and 'obsolete' not in block.category:
+#        break
+#    else:
+        blocks_todo.add(block)
+print "Done %i out of %i blocks" % (len(Interpreter.COMMANDS),
+        len(blocks_todo))
+print "Next block: %s" % random.choice(list(blocks_todo))
+
+
 p = kurt.Project()
+p.stage.parse("""
+when gf clicked
+repeat 10
+    say 'hi'
+end
+""")
 p.stage.scripts = [
     kurt.Script([
         kurt.Block("when I receive", "begin"),
@@ -166,6 +271,10 @@ p.stage.scripts = [
         ]),
     ]),
     kurt.Script([
+        kurt.Block("when I receive", "begin"),
+        kurt.Block("think for secs", "Heya", 5),
+    ]),
+    kurt.Script([
         kurt.Block("when @greenFlag clicked"),
         kurt.Block("repeat", 2, [
             kurt.Block("say", "poo"),
@@ -179,11 +288,12 @@ p.stage.scripts = [
 sprite = kurt.Sprite(p, 'Sprite1')
 p.sprites.append(sprite)
 parsec = lambda text: kurt.text.parse(text, sprite)
-#def ev(text):
-#    project = p.copy()
-#    elda = Interpreter(p)
-#    elda.start()
-#    project.sprites[0]
-#
-#ev = lambda text: evaluate(sprite, parsec(text)[0])
-#
+def ev(text):
+    project = p.copy()
+    elda = Interpreter(p)
+    elda.start()
+    elda.tick()
+    sprite = p.sprites[0]
+    script = kurt.text.parse_expression(text, sprite)
+    return elda.evaluate(sprite, script)
+
