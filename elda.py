@@ -94,22 +94,27 @@ class Interpreter(object):
         remove_threads = []
         while 1:
             for (script, thread) in self.threads.items():
-                remove = False
+                modified = False
                 for event in thread.tick():
                     if event.kind == "stop":
                         if event.value == "all":
                             self.stop()
                             return
                         elif event.value == "other scripts in sprite":
-                            pass # TODO
+                            for (script, other) in self.threads.items():
+                                if other.scriptable == thread.scriptable:
+                                    other.finish()
+                                    del self.threads[script]
+                            modified = True
+                            break
                         else:
                             thread.finish()
-                            remove = True
+                            del self.threads[script]
+                            modified = True
                             break
                     else: # Pass to Screen
                         yield event
-                if remove:
-                    del self.threads[script]
+                if modified:
                     break
             else:
                 break
@@ -320,11 +325,8 @@ class ScreenEvent(object):
 
 
 class IScreen(object):
-    def get_mouse_x(self):
-        return 0
-
-    def get_mouse_y(self):
-        return 0
+    def get_mouse_pos(self):
+        return (0, 0)
 
     def is_mouse_down(self):
         return False
@@ -404,10 +406,13 @@ def operator(bt, func):
         return func(*args)
     return command(bt)(wrapped)
 
-def sensing(bt, method_name):
+def sensing(bt, method_name, after=None):
     def wrapped(s, *args):
         f = getattr(s.project.interpreter.screen, method_name)
-        return f(*args)
+        result = f(*args)
+        if after:
+            result = after(result)
+        return result
     return command(bt)(wrapped)
 
 ## Motion
@@ -445,7 +450,7 @@ def go_to(s, x, y):
 @command("go to")
 def go_to_sprite(s, sprite):
     if sprite == "mouse":
-        pass # TODO
+        s.position = s.project.interpreter.screen.get_mouse_pos()
     else:
         s.position = sprite.position
 
@@ -573,8 +578,6 @@ def hide(s):
 
 @command("go to front")
 def go_to_front(s):
-    # TODO Objects which appear later in the array are on top of those which
-    # appear earlier.
     s.project.actors.remove(s)
     s.project.actors.append(s)
 
@@ -816,8 +819,8 @@ def ask(s, prompt):
 def answer(s):
     return s.project.interpreter.answer
 
-sensing("mouse x", "get_mouse_x")
-sensing("mouse y", "get_mouse_y")
+sensing("mouse x", "get_mouse_pos", lambda (x, y): x)
+sensing("mouse y", "get_mouse_pos", lambda (x, y): y)
 sensing("mouse down?", "is_mouse_down")
 sensing("key pressed?", "is_key_pressed")
 
