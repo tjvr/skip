@@ -881,14 +881,14 @@ operator("round", round)
 @command("computeFunction:of:")
 def math_function(s, name, arg):
     functions = {
-        'abs': math.abs,
+        'abs': abs,
         'sqrt': math.sqrt,
         'sin': lambda deg: math.sin(math.radians(deg)),
         'cos': lambda deg: math.cos(math.radians(deg)),
         'tan': lambda deg: math.tan(math.radians(deg)),
-        'asin': lambda n: math.asin(math.degrees(n)),
-        'acos': lambda n: math.acos(math.degrees(n)),
-        'atan': lambda n: math.atan(math.degrees(n)),
+        'asin': lambda n: math.degrees(math.asin(n)),
+        'acos': lambda n: math.degrees(math.acos(n)),
+        'atan': lambda n: math.degrees(math.atan(n)),
         'log': lambda n: math.log(n, 10),
         'ln': math.log,
         'e ^': lambda n: math.e ** n,
@@ -1002,14 +1002,36 @@ say join "Hello, " answer
 sprite = kurt.Sprite(p, 'Sprite1')
 p.sprites.append(sprite)
 parsec = lambda text: kurt.text.parse(text, sprite)
-def ev(text):
-    project = p.copy()
+
+def main(sprite=None):
+    import sys
+    if sprite is None:
+        project = kurt.Project()
+        sprite = kurt.Sprite(project, "Sprite1")
+        project.sprites = [sprite]
+    else:
+        project = sprite.project
+
     screen = ConsoleScreen()
     screen.set_project(project)
-    elda = screen.interpreter
-    elda.start()
-    elda.tick()
-    sprite = project.sprites[0]
-    script = kurt.text.parse_expression(text, sprite)
-    return elda.evaluate(sprite, script)
+    interpreter = screen.interpreter
+    interpreter.start()
+
+    print "Return,Ctrl-D to execute."
+    while 1:
+        print "---"
+        text = sys.stdin.read()
+        print "..."
+        script = kurt.text.parse_expression(text.strip(), sprite)
+        print script
+        if isinstance(script, kurt.Block) and script.type.shape in ("reporter",
+                "boolean"):
+            print interpreter.evaluate(sprite, script)
+        else:
+            if isinstance(script, kurt.Block):
+                script = [script]
+            script = kurt.Script(script)
+            interpreter.push_script(sprite, script)
+            while interpreter.threads:
+                screen.tick()
 
