@@ -10,14 +10,28 @@ import kurt
 
 
 
-## HACK
-
-kurt.BlockType.get("wait until").inserts[0].unevaluated = True
-kurt.BlockType.get("repeat until").inserts[0].unevaluated = True
-kurt.BlockType.get("forever if").inserts[0].unevaluated = True
-
-
 #-- Interpreter --#
+
+class Thread(object):
+    def __init__(self, generator, scriptable, callback):
+        self.generator = generator
+        self.scriptable = scriptable
+        self.callback = callback
+
+    def tick(self):
+        try:
+            event = self.generator.next()
+            while event:
+                assert isinstance(event, ScriptEvent)
+                yield event
+                event = self.generator.next()
+        except StopIteration:
+            yield ScriptEvent(self.scriptable, "stop")
+
+    def finish(self):
+        if self.callback:
+            self.callback(self)
+
 
 class Interpreter(object):
     COMMANDS = {}
@@ -62,9 +76,14 @@ class Interpreter(object):
                 if script.blocks[0].type.has_command("whenGreenFlag"):
                     self.push_script(scriptable, script)
 
-    def push_script(self, s, script):
-        if script not in self.threads:
-            self.threads.append(self.run_script(s, script))
+    def push_script(self, scriptable, script, callback=None):
+        """Run the script and add it to the list of threads."""
+        if script in self.threads:
+            self.threads[script].finish()
+        thread = Thread(self.run_script(scriptable, script),
+                                      scriptable, callback)
+        self.threads[script] = thread
+        return thread
 
     def tick(self):
         """Execute one frame of the interpreter.
@@ -72,31 +91,34 @@ class Interpreter(object):
         Don't call more than 40 times per second.
 
         """
-        for thread in self.threads:
-            try:
-                event = True
-                while event:
-                    event = thread.next()
-                    if event:
-                        assert isinstance(event, ScriptEvent)
-                        if event.kind == "stop":
-                            if event.value == "this script":
-                                self.threads.remove(thread)
-                                break
-                            elif event.value == "all":
-                                self.stop()
-                                return
-                            elif event.value == "other scripts in sprite":
-                                pass # TODO
+        remove_threads = []
+        while 1:
+            for (script, thread) in self.threads.items():
+                remove = False
+                for event in thread.tick():
+                    if event.kind == "stop":
+                        if event.value == "all":
+                            self.stop()
+                            return
+                        elif event.value == "other scripts in sprite":
+                            pass # TODO
                         else:
-                            yield event
-            except StopIteration:
-                self.threads.remove(thread)
+                            thread.finish()
+                            remove = True
+                            break
+                    else: # Pass to Screen
+                        yield event
+                if remove:
+                    del self.threads[script]
+                    break
+            else:
+                break
 
     def stop(self):
         """Stop running threads."""
-        self.threads = []
+        self.threads = {}
         self.answer = ""
+        self.ask_lock = False
 
     # Scripts
 
@@ -310,6 +332,32 @@ class IScreen(object):
     def is_key_pressed(self, name):
         return False
 
+    def touching_sprite(self, s, sprite):
+        return False
+
+    def touching_color(self, s, color):
+        return False
+
+    def touching_color_over(self, s, color, over):
+        return False
+
+    def ask(self, s, prompt):
+        # sync: yield while waiting for answer.
+        while 0:
+            yield
+        yield ""
+
+    def play_sound(self, s, sound):
+        pass
+
+    def play_sound_until_done(self, s, sound):
+        self.play_sound(s, sound)
+        while 0: # sync: yield while playing
+            yield
+
+    def stop_sounds(self, s):
+        pass
+
 
 class ConsoleScreen(IScreen):
     def set_project(self, project):
@@ -332,15 +380,9 @@ class ConsoleScreen(IScreen):
         while scr.interpreter.threads:
             scr.tick()
 
-
-def bounds(s):
-    (x, y) = s.position
-    x -= s.costume.rotation_center[0]
-    y += s.costume.rotation_center[1]
-    rect = Rect((x, y), s.costume.size)
-    # TODO rotate
-    # TODO scale
-    return rect
+    def ask(self, s, prompt):
+        print "%s asks: %s" % (s.name, prompt)
+        yield raw_input("? ")
 
 
 
@@ -556,13 +598,33 @@ def background_number(s):
 
 ## Sound
 
-# TODO play sound
-# TODO play sound until done @screen_sync
-# TODO stop all sounds
+@command("play sound")
+def play_sound(s, sound):
+    s.project.interpreter.screen.play_sound(s, sound)
 
-# TODO rest for beats
-# TODO play drum for beats
-# TODO play note for beats
+@command("play sound until done")
+def play_sound_until_done(s, sound):
+    return s.project.interpreter.screen.play_sound_until_done(s, sound)
+
+@command("stop all sounds")
+def stop_sounds(s):
+    s.project.interpreter.screen.stop_sounds()
+
+def beat_seconds(s, beats):
+    seconds_per_beat = 60 / s.project.tempo
+    return beats * seconds_per_beat
+
+@command("rest for beats")
+def rest_beats(s, beats):
+    return wait(beat_seconds(beats))
+
+@command("play drum for beats")
+def play_drum(s, drum, beats):
+    s.project.interpreter.screen.play_drum(drum, beat_seconds(beats))
+
+@command("play note for beats")
+def play_note(s, note, beats):
+    s.project.interpreter.screen.play_note(note, beat_seconds(beats))
 
 @command("set instrument to")
 def set_instrument(s, value):
@@ -669,7 +731,21 @@ def broadcast(s, message):
             if script.blocks[0].type.has_command("whenIReceive"):
                 s.project.interpreter.push_script(s, script)
 
-# TODO broadcast and wait @interpreter_sync
+@command("broadcast and wait")
+def broadcast_and_wait(s, message):
+    threads = set()
+    def callback(thread):
+        print 'remove', thread
+        threads.remove(thread)
+    for s in [s.project.stage] + s.project.sprites:
+        for script in s.scripts:
+            if script.blocks[0].type.has_command("whenIReceive"):
+                threads.add(s.project.interpreter.push_script(s, script,
+                            callback=callback))
+    print threads
+    while threads:
+        yield
+
 
 @command("if")
 def if_(s, condition, body):
@@ -698,6 +774,15 @@ def stop_script(s, which):
 
 ## Sensing
 
+def bounds(s):
+    (x, y) = s.position
+    x -= s.costume.rotation_center[0]
+    y += s.costume.rotation_center[1]
+    rect = Rect((x, y), s.costume.size)
+    # TODO rotate
+    # TODO scale
+    return rect
+
 @command("touching")
 def touching_sprite(s, sprite):
     rect = bounds(s)
@@ -705,12 +790,27 @@ def touching_sprite(s, sprite):
         return (rect.left < -240 or rect.right > 240 or rect.top > 180 or
                 rect.bottom < -180)
     else:
-        pass # TODO touching sprite
+        return s.project.interpreter.screen.touching_sprite(s, sprite)
 
-# TODO touching colour
-# TODO colour - is touching
+@command("touching color")
+def touching_color(s, color):
+    return s.project.interpreter.screen.touching_color(s, color)
 
-# TODO ask @screen_sync
+@command("color is touching")
+def touching_color(s, color, over):
+    return s.project.interpreter.screen.touching_color_over(s, color, over)
+
+@command("ask and wait")
+def ask(s, prompt):
+    while s.project.interpreter.ask_lock:
+        yield
+    s.project.interpreter.ask_lock = True
+    for answer in s.project.interpreter.screen.ask(s, prompt):
+        if answer:
+            s.project.interpreter.answer = answer
+            break
+        yield
+    s.project.interpreter.ask_lock = False
 
 @command("answer")
 def answer(s):
@@ -746,8 +846,6 @@ def attribute_of(s, name, sprite):
         'volume': sprite.volume,
     }
     return attributes[name]
-
-# TODO loudness
 
 @command("loudness")
 def loudness(s):
@@ -883,51 +981,19 @@ def suggest_all():
 
 
 p = kurt.Project()
+p.sprites = [kurt.Sprite(p, "cat")]
 p.stage.parse("""
 when gf clicked
-repeat 10
-    say 'hi'
-end
-""")
-p.stage.scripts = [
-    kurt.Script([
-        kurt.Block("when I receive", "begin"),
-        kurt.Block("forever", [
-            kurt.Block("say", "hi"),
-            kurt.Block("wait secs", 1),
-        ]),
-    ]),
-    kurt.Script([
-        kurt.Block("when I receive", "begin"),
-        kurt.Block("forever", [
-            kurt.Block("wait secs", 1),
-            kurt.Block("say", "boo"),
-        ]),
-    ]),
-    kurt.Script([
-        kurt.Block("when I receive", "begin"),
-        kurt.Block("think for secs", "Heya", 5),
-    ]),
-    kurt.Script([
-        kurt.Block("when @greenFlag clicked"),
-        kurt.Block("repeat", 2, [
-            kurt.Block("say", "poo"),
-            kurt.Block("wait secs", 1),
-        ]),
-        kurt.Block("broadcast", "begin"),
-        kurt.Block("say", "before"),
-    ]),
-]
-p.stage.scripts = []
-p.stage.parse("""
-when gf clicked
-repeat 10
-    if timer > 1.5
-        stop script
-    end
-    say timer
+forever
+    say "I'm alive!"
     wait 0.5 secs
 end
+""")
+p.stage.parse("""
+when gf clicked
+say "We need your name."
+ask "What is your name?" and wait
+say join "Hello, " answer
 """)
 
 sprite = kurt.Sprite(p, 'Sprite1')
