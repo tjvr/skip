@@ -1,10 +1,10 @@
 """An interpreter for Scratch projects based on Kurt."""
 
-import math
-import time
-import operator as op
 import inspect
+import math
+import operator as op
 import random
+import time
 
 import kurt
 
@@ -42,6 +42,7 @@ class Interpreter(object):
         for scriptable in [self.project.stage] + self.project.sprites:
             self.augment(scriptable)
         self.stop()
+        reset_timer(self)
 
     def bind(self, screen):
         self.screen = screen
@@ -70,10 +71,17 @@ class Interpreter(object):
     def start(self):
         """Trigger green flag scripts."""
         self.stop()
-        reset_timer(self)
+        self.trigger_hats("whenGreenFlag")
+
+    def trigger_hats(self, command, arg=None):
         for scriptable in [self.project.stage] + self.project.sprites:
-            for script in scriptable.scripts:
-                if script.blocks[0].type.has_command("whenGreenFlag"):
+            self.trigger_scriptable_hats(scriptable, command, arg)
+
+    def trigger_scriptable_hats(self, scriptable, command, arg=None):
+        for script in scriptable.scripts:
+            hat = script.blocks[0]
+            if hat.type.has_command(command):
+                if arg is None or (hat.args and hat.args[0] == arg):
                     self.push_script(scriptable, script)
 
     def push_script(self, scriptable, script, callback=None):
@@ -85,12 +93,20 @@ class Interpreter(object):
         self.threads[script] = thread
         return thread
 
-    def tick(self):
+    def tick(self, events):
         """Execute one frame of the interpreter.
 
         Don't call more than 40 times per second.
 
         """
+        for event in events:
+            if event.kind == "key_pressed":
+                assert event.value in kurt.Insert(None, "key").options()
+                self.trigger_hats("whenKeyPressed", event.value)
+            elif event.kind == "scriptable_clicked":
+                assert isinstance(event.value, kurt.Scriptable)
+                self.trigger_scriptable_hats(event.value, "whenClicked")
+
         remove_threads = []
         while 1:
             for (script, thread) in self.threads.items():
@@ -159,8 +175,9 @@ class Interpreter(object):
 
             f = self.COMMANDS[value.type]
 
-            args = [self.evaluate(s, arg, insert)
-                    for (arg, insert) in zip(value.args, value.type.inserts)]
+            args = [self.evaluate(s, arg, arg_insert)
+                    for (arg, arg_insert)
+                    in zip(list(value.args), value.type.inserts)]
             value = f(s, *args)
 
             def flatten_generators(gen):
@@ -184,25 +201,22 @@ class Interpreter(object):
                         value = int(value)
                 except (TypeError, ValueError):
                     pass
-
+            if insert.shape in ("string", "readonly-menu"):
+                value = unicode(value)
             if insert.kind in ("spriteOrStage", "spriteOrMouse",
                                  "stageOrThis", "spriteOnly"):
                 if value not in ("mouse-pointer", "edge"):
                     value = (self.project.stage if value == "Stage"
-                                                else project.get_sprite(value))
+                             else self.project.get_sprite(value))
             elif insert.kind == "var":
                 if value in s.variables:
                     value = s.variables[value]
                 else:
-                    if value not in s.project.variables:
-                        s.project.variables[value] = kurt.Variable()
                     value = s.project.variables[value]
             elif insert.kind == "list":
                 if value in s.lists:
                     value = s.lists[value]
                 else:
-                    if value not in s.project.lists:
-                        s.project.lists[value] = kurt.Variable()
                     value = s.project.lists[value]
 
         return value
@@ -221,13 +235,15 @@ class Rect(object):
         Rect((left, bottom, width, height))
 
     """
+
     # TODO optimize
+
     def __init__(self, left, bottom=None, width=None, height=None):
         if bottom is None:
             (left, bottom, width, height) = left
         elif width is None:
-            assert height is not None
-            ((left, bottom), (width, height)) = bottom
+            assert height is None
+            ((left, bottom), (width, height)) = (left, bottom)
         self.bottomleft = (left, bottom)
         self.size = (width, height)
 
@@ -259,7 +275,7 @@ class Rect(object):
         else:
             raise AttributeError('%r has no attribute %r' % (type(self), name))
 
-    def __setattr__(self, name, value):
+    def __setattribute__(self, name, value):
         if name == 'width':
             self.size[0] = value
         elif name == 'height':
@@ -286,6 +302,9 @@ class Rect(object):
             (self.centerx, self.centery) = value
         else:
             raise AttributeError('%r has no attribute %r' % (type(self), name))
+
+    def __iter__(self):
+        return iter((self.left, self.bottom, self.width, self.height))
 
 
 class ScriptEvent(object):
@@ -324,7 +343,7 @@ class ScreenEvent(object):
         return r
 
 
-class IScreen(object):
+class Screen(object):
     def get_mouse_pos(self):
         return (0, 0)
 
@@ -359,32 +378,6 @@ class IScreen(object):
 
     def stop_sounds(self, s):
         pass
-
-
-class ConsoleScreen(IScreen):
-    def set_project(self, project):
-        self.project = project
-        self.interpreter = Interpreter(project).bind(self)
-
-    def tick(self):
-        for event in self.interpreter.tick():
-            if event.kind in ('say', 'think'):
-                print unicode(event)
-            else:
-                print event
-
-    @classmethod
-    def run(cls, project):
-        """Run the project until all the scripts die."""
-        scr = cls()
-        scr.set_project(project)
-        scr.interpreter.start()
-        while scr.interpreter.threads:
-            scr.tick()
-
-    def ask(self, s, prompt):
-        print "%s asks: %s" % (s.name, prompt)
-        yield raw_input("? ")
 
 
 
@@ -439,8 +432,13 @@ def set_direction(s, direction):
 
 @command("point towards")
 def point_towards(s, sprite):
-    dx = sprite.pos[0] - s.pos[0]
-    dy = sprite.pos[1] - s.pos[1]
+    (x, y) = s.position
+    if sprite == "mouse-pointer":
+        (ox, oy) = s.project.interpreter.screen.get_mouse_pos()
+    else:
+        (ox, oy) = sprite.position
+    dx = ox - x
+    dy = oy - y
     s.direction = math.degrees(math.atan2(dx, dy))
 
 @command("go to x: y:")
@@ -449,7 +447,7 @@ def go_to(s, x, y):
 
 @command("go to")
 def go_to_sprite(s, sprite):
-    if sprite == "mouse":
+    if sprite == "mouse-pointer":
         s.position = s.project.interpreter.screen.get_mouse_pos()
     else:
         s.position = sprite.position
@@ -500,7 +498,7 @@ def get_y(s):
 
 @command("direction")
 def get_direction(s):
-    return s.direction
+    return (s.direction + 179) % 360  -  179
 
 
 ## Looks
@@ -508,7 +506,7 @@ def get_direction(s):
 @command("switch to costume")
 def switch_costume(s, name):
     if isinstance(name, (int, float)):
-        s.costume_index = round(name) - 1
+        s.costume_index = int(round(name)) - 1
     else:
         for costume in s.costumes:
             if costume.name == name:
@@ -520,7 +518,7 @@ def next_costume(s):
     s.costume_index = (s.costume_index + 1) % len(s.costumes)
 
 @command("costume #")
-def costume_number(s):
+def get_costume_number(s):
     return s.costume_index + 1
 
 @command("say")
@@ -705,9 +703,6 @@ def stamp(s):
 
 ## Control
 
-# TODO when key pressed
-# TODO when clicked
-
 @command("wait secs")
 def wait(s, duration):
     end_time = time.time() + duration
@@ -715,16 +710,16 @@ def wait(s, duration):
         yield
 
 @command("forever")
-def forever(s, blocks):
+def forever(s, body):
     while 1:
-        yield s.project.interpreter.run_script(s, blocks)
+        yield s.project.interpreter.run_script(s, body)
         yield
 
 @command("repeat")
-def repeat(s, times, blocks):
+def repeat(s, times, body):
     times = int(math.ceil(times))
     for i in range(times):
-        yield s.project.interpreter.run_script(s, blocks)
+        yield s.project.interpreter.run_script(s, body)
         yield
 
 @command("broadcast")
@@ -738,14 +733,13 @@ def broadcast(s, message):
 def broadcast_and_wait(s, message):
     threads = set()
     def callback(thread):
-        print 'remove', thread
-        threads.remove(thread)
+        if thread in threads: # TODO zap this line
+            threads.remove(thread)
     for s in [s.project.stage] + s.project.sprites:
         for script in s.scripts:
             if script.blocks[0].type.has_command("whenIReceive"):
                 threads.add(s.project.interpreter.push_script(s, script,
                             callback=callback))
-    print threads
     while threads:
         yield
 
@@ -762,13 +756,13 @@ def if_else(s, condition, body, other_body):
 
 @command("wait until")
 def wait_until(s, condition):
-    while not evaluate(condition):
+    while not s.project.interpreter.evaluate(condition):
         yield
 
 @command("repeat until")
-def wait_until(s, condition):
-    while not evaluate(condition):
-        yield s.project.interpreter.run_script(s, blocks)
+def repeat_until(s, condition, body):
+    while not s.project.interpreter.evaluate(s, condition):
+        yield s.project.interpreter.run_script(s, body)
         yield
 
 @command("stop")
@@ -777,13 +771,75 @@ def stop_script(s, which):
 
 ## Sensing
 
+def matmult(*args):
+    def mult(a, b):
+        # http://stackoverflow.com/questions/10508021
+        zip_b = zip(*b)
+        return [[sum(ele_a*ele_b for ele_a, ele_b in zip(row_a, col_b))
+                 for col_b in zip_b] for row_a in a]
+    return reduce(mult, args)
+
+def transformation_matrix(x, y, sc, cx, cy, theta):
+    sina = math.sin(a)
+    cosa = math.cos(a)
+
+    A = matmult([[1, 0, x],  # translate
+                 [0, 1, y],
+                 [0, 0, 1]],
+                [[1, 0, cx],
+                 [0, 1, cy],
+                 [0, 0, 1]],
+                [[sc, 0, 0], # scale
+                 [0, sc, 0],
+                 [0, 0, 1]],
+                [[cosa, sina,
+
+
 def bounds(s):
     (x, y) = s.position
-    x -= s.costume.rotation_center[0]
-    y += s.costume.rotation_center[1]
-    rect = Rect((x, y), s.costume.size)
-    # TODO rotate
-    # TODO scale
+    (w, h) = s.costume.size
+    scale = s.size / 100
+
+    # resize and transform
+    tlx = x - s.costume.rotation_center[0] * scale
+    tly = y + s.costume.rotation_center[1] * scale
+    w *= scale
+    h *= scale
+    rect = Rect(tlx, tly, w, h)
+
+    # rotate
+    if s.rotation_style == "normal":
+        # rect : has four corners.
+        # (x, y) : the centre of rotation.
+
+        a = math.radians(s.direction - 90)
+
+        rotate = lambda (x, y): (x + (cx - x)*cosa + (cy - y)*sina,
+                                 y - (cx-x)*sina + (cy-y)*cosa)
+
+        xs = []
+        ys = []
+        for (cx, cy) in (rect.topleft, rect.topright, rect.bottomleft,
+                         rect.bottomright):
+            (rot_cx, rot_cy) = rotate((cx, cy))
+            xs.append(rot_cx)
+            ys.append(rot_cy)
+
+        left = min(xs)
+        right = max(xs)
+        bottom = min(ys)
+        top = max(ys)
+
+        bottomleft = (left, bottom)
+
+        rot_w = right - left
+        rot_h = top - bottom
+
+        #assert rot_w == h * cosa  +  w * sina
+        #assert rot_h == h * sina  +  w * cosa
+
+        rect = Rect(bottomleft, (rot_w, rot_h))
+
     return rect
 
 @command("touching")
@@ -840,15 +896,16 @@ def timer(s):
 
 @command("getAttribute:of:")
 def attribute_of(s, name, sprite):
-    attributes = {
-        'x position': sprite.pos[0],
-        'y position': sprite.pos[1],
-        'direction': sprite.direction,
-        'costume #': sprite.costume_index + 1,
-        'size': sprite.size,
-        'volume': sprite.volume,
+    attr_functions = {
+        'x position': get_x,
+        'y position': get_y,
+        'direction': get_direction,
+        'costume #': get_costume_number,
+        'size': get_size,
+        'volume': get_volume,
     }
-    return attributes[name]
+    f = attr_functions[name]
+    return f(sprite)
 
 @command("loudness")
 def loudness(s):
@@ -909,7 +966,7 @@ def set_variable(s, variable, value):
 
 @command("change by")
 def change_variable(s, variable, delta):
-    variable.value += delta
+    variable.value = float(variable.value) + float(delta)
 
 @command("show variable")
 def show_variable(s, variable):
@@ -922,7 +979,7 @@ def hide_variable(s, variable):
 ## Lists
 
 @command("list")
-def get_variable(s, list_):
+def get_list(s, list_):
     return " ".join(list_.items) # TODO correct behaviour
 
 @command("add to")
@@ -962,49 +1019,38 @@ operator("contains", lambda list_, item: item in list_.items)
 
 
 
-#-- Test --#
+#-- REPL --#
 
-s14_blocks = set(b for b in kurt.plugin.Kurt.blocks
-                 if b.has_translation("scratch14")
-                    and 'obsolete' not in b.translate("scratch14").category
-                    and 'motor' not in b.text
-                    and 'sensor' not in b.text
-                    and not b._workaround
-                    and not b.shape == "hat"
-                )
+class ConsoleScreen(Screen):
+    def set_project(self, project):
+        self.project = project
+        self.interpreter = Interpreter(project).bind(self)
 
-print "%i blocks done, %i to go" % (len(Interpreter.COMMANDS),
-        len(s14_blocks) - len(Interpreter.COMMANDS))
-blocks_todo = s14_blocks - set(Interpreter.COMMANDS)
-def suggest():
-    print "Next block: %s" % random.choice(list(blocks_todo))
-suggest()
-def suggest_all():
-    return sorted(blocks_todo, key=lambda b: b.text)
+    def tick(self):
+        events = []
+        for event in self.interpreter.tick(events):
+            if event.kind in ('say', 'think'):
+                print unicode(event)
+            else:
+                print event
 
+    @classmethod
+    def run(cls, project):
+        """Run the project until all the scripts die."""
+        scr = cls()
+        scr.set_project(project)
+        scr.interpreter.start()
+        while scr.interpreter.threads:
+            scr.tick()
 
-p = kurt.Project()
-p.sprites = [kurt.Sprite(p, "cat")]
-p.stage.parse("""
-when gf clicked
-forever
-    say "I'm alive!"
-    wait 0.5 secs
-end
-""")
-p.stage.parse("""
-when gf clicked
-say "We need your name."
-ask "What is your name?" and wait
-say join "Hello, " answer
-""")
+    # Script methods
 
-sprite = kurt.Sprite(p, 'Sprite1')
-p.sprites.append(sprite)
-parsec = lambda text: kurt.text.parse(text, sprite)
+    def ask(self, s, prompt):
+        print "%s asks: %s" % (s.name, prompt)
+        yield raw_input("? ")
+
 
 def main(sprite=None):
-    import sys
     if sprite is None:
         project = kurt.Project()
         sprite = kurt.Sprite(project, "Sprite1")
@@ -1014,19 +1060,22 @@ def main(sprite=None):
 
     screen = ConsoleScreen()
     screen.set_project(project)
-    interpreter = screen.interpreter
+
+    interpreter = sprite.project.interpreter
+    screen = interpreter.screen
     interpreter.start()
 
-    print "Return,Ctrl-D to execute."
+    print "Semicolon ';' terminates input"
     while 1:
-        print "---"
-        text = sys.stdin.read()
-        print "..."
+        text = line = ""
+        while not line.endswith(";"):
+            line = raw_input("> ")
+            text += line + "\n"
+        text = text.rstrip().rstrip(";")
         script = kurt.text.parse_expression(text.strip(), sprite)
-        print script
         if isinstance(script, kurt.Block) and script.type.shape in ("reporter",
                 "boolean"):
-            print interpreter.evaluate(sprite, script)
+            print repr(interpreter.evaluate(sprite, script))
         else:
             if isinstance(script, kurt.Block):
                 script = [script]
