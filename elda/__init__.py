@@ -73,16 +73,24 @@ class Interpreter(object):
         self.stop()
         self.trigger_hats("whenGreenFlag")
 
-    def trigger_hats(self, command, arg=None):
+    def trigger_hats(self, command, arg=None, callback=None):
+        """Returns a list with each script that is triggered."""
+        threads = []
         for scriptable in [self.project.stage] + self.project.sprites:
-            self.trigger_scriptable_hats(scriptable, command, arg)
+            threads += self.trigger_scriptable_hats(scriptable, command, arg,
+                                                    callback)
+        return threads
 
-    def trigger_scriptable_hats(self, scriptable, command, arg=None):
+    def trigger_scriptable_hats(self, scriptable, command, arg=None,
+                                callback=None):
+        threads = []
         for script in scriptable.scripts:
             hat = script.blocks[0]
             if hat.type.has_command(command):
                 if arg is None or (hat.args and hat.args[0] == arg):
-                    self.push_script(scriptable, script)
+                    thread = self.push_script(scriptable, script, callback)
+                    threads.append(thread)
+        return threads
 
     def push_script(self, scriptable, script, callback=None):
         """Run the script and add it to the list of threads."""
@@ -103,9 +111,17 @@ class Interpreter(object):
             if event.kind == "key_pressed":
                 assert event.value in kurt.Insert(None, "key").options()
                 self.trigger_hats("whenKeyPressed", event.value)
-            elif event.kind == "scriptable_clicked":
-                assert isinstance(event.value, kurt.Scriptable)
-                self.trigger_scriptable_hats(event.value, "whenClicked")
+            elif event.kind == "click":
+                mouse_pos = self.screen.get_mouse_pos()
+                for sprite in reversed(self.project.sprites):
+                    rect = bounds(sprite)
+                    if rect.collide_point(mouse_pos):
+                        if self.screen.touching_mouse(sprite):
+                            scriptable = sprite
+                            break
+                else:
+                    scriptable = self.project.stage
+                self.trigger_scriptable_hats(scriptable, "whenClicked")
 
         remove_threads = []
         while 1:
@@ -218,6 +234,8 @@ class Interpreter(object):
                     value = s.lists[value]
                 else:
                     value = s.project.lists[value]
+            elif insert.kind == "sound":
+                value = s.sounds[value]
 
         return value
 
@@ -226,7 +244,7 @@ class Interpreter(object):
 #-- Screen --#
 
 class Rect(object):
-    """An area of screen with both size and position.
+    """An area of screen with size and position. Uses Scratch co-ordinates.
 
     Usage:
 
@@ -246,6 +264,10 @@ class Rect(object):
             ((left, bottom), (width, height)) = (left, bottom)
         self.bottomleft = (left, bottom)
         self.size = (width, height)
+
+    def __repr__(self):
+        return "Rect(%i, %i, %i, %i)" % (self.left, self.bottom, self.width,
+                                         self.height)
 
     def __getattr__(self, name):
         if name == 'width':
@@ -306,6 +328,41 @@ class Rect(object):
     def __iter__(self):
         return iter((self.left, self.bottom, self.width, self.height))
 
+    def copy(self):
+        return Rect(self)
+
+    def move(self, dx, dy=None):
+        r = self.copy()
+        r.move_ip(dx, dy)
+        return r
+
+    def move_ip(self, dx, dy=None):
+        if dy is None: (dx, dy) = dx
+        self.left += dx
+        self.bottom += dy
+
+    def scale(self, scale):
+        r = self.copy()
+        r.scale_ip(scale)
+        return r
+
+    def scale_ip(self, scale):
+        self.left *= scale
+        self.bottom *= scale
+        self.width *= scale
+        self.height *= scale
+
+    def collide_point(self, (x, y)):
+        return (x > self.left and x < self.right and y > self.bottom and
+                y < self.top)
+
+    def collide_rect(self, other):
+        other = Rect(other)
+        return (self.left + self.width > other.left and
+                other.left + other.width > self.left and
+                self.bottom + self.height > other.bottom and
+                self.bottom + self.height > other.bottom)
+
 
 class ScriptEvent(object):
     """Yielded from a block function to the Interpreter.
@@ -353,30 +410,35 @@ class Screen(object):
     def is_key_pressed(self, name):
         return False
 
-    def touching_sprite(self, s, sprite):
+    def touching_mouse(self, sprite):
+        """Filter collide. Bounding boxes already checked."""
+        return True
+
+    def touching_sprite(self, sprite, other):
+        """Filter collide. Bounding boxes already checked."""
+        return True
+
+    def touching_color(self, sprite, color):
         return False
 
-    def touching_color(self, s, color):
+    def touching_color_over(self, sprite, color, over):
         return False
 
-    def touching_color_over(self, s, color, over):
-        return False
-
-    def ask(self, s, prompt):
+    def ask(self, scriptable, prompt):
         # sync: yield while waiting for answer.
         while 0:
             yield
         yield ""
 
-    def play_sound(self, s, sound):
+    def play_sound(self, sound):
         pass
 
-    def play_sound_until_done(self, s, sound):
-        self.play_sound(s, sound)
+    def play_sound_until_done(self, sound):
+        self.play_sound(sound)
         while 0: # sync: yield while playing
             yield
 
-    def stop_sounds(self, s):
+    def stop_sounds(self):
         pass
 
 
@@ -601,11 +663,11 @@ def background_number(s):
 
 @command("play sound")
 def play_sound(s, sound):
-    s.project.interpreter.screen.play_sound(s, sound)
+    s.project.interpreter.screen.play_sound(sound)
 
 @command("play sound until done")
 def play_sound_until_done(s, sound):
-    return s.project.interpreter.screen.play_sound_until_done(s, sound)
+    return s.project.interpreter.screen.play_sound_until_done(sound)
 
 @command("stop all sounds")
 def stop_sounds(s):
@@ -724,22 +786,16 @@ def repeat(s, times, body):
 
 @command("broadcast")
 def broadcast(s, message):
-    for s in [s.project.stage] + s.project.sprites:
-        for script in s.scripts:
-            if script.blocks[0].type.has_command("whenIReceive"):
-                s.project.interpreter.push_script(s, script)
+    s.project.interpreter.trigger_hats("whenIReceive", message)
 
 @command("broadcast and wait")
 def broadcast_and_wait(s, message):
-    threads = set()
     def callback(thread):
         if thread in threads: # TODO zap this line
             threads.remove(thread)
-    for s in [s.project.stage] + s.project.sprites:
-        for script in s.scripts:
-            if script.blocks[0].type.has_command("whenIReceive"):
-                threads.add(s.project.interpreter.push_script(s, script,
-                            callback=callback))
+    threads = set(
+        s.project.interpreter.trigger_hats("whenIReceive", message, callback))
+    yield # TODO ?
     while threads:
         yield
 
@@ -756,7 +812,7 @@ def if_else(s, condition, body, other_body):
 
 @command("wait until")
 def wait_until(s, condition):
-    while not s.project.interpreter.evaluate(condition):
+    while not s.project.interpreter.evaluate(s, condition):
         yield
 
 @command("repeat until")
@@ -771,76 +827,41 @@ def stop_script(s, which):
 
 ## Sensing
 
-def matmult(*args):
-    def mult(a, b):
-        # http://stackoverflow.com/questions/10508021
-        zip_b = zip(*b)
-        return [[sum(ele_a*ele_b for ele_a, ele_b in zip(row_a, col_b))
-                 for col_b in zip_b] for row_a in a]
-    return reduce(mult, args)
-
-def transformation_matrix(x, y, sc, cx, cy, theta):
-    sina = math.sin(a)
-    cosa = math.cos(a)
-
-    A = matmult([[1, 0, x],  # translate
-                 [0, 1, y],
-                 [0, 0, 1]],
-                [[1, 0, cx],
-                 [0, 1, cy],
-                 [0, 0, 1]],
-                [[sc, 0, 0], # scale
-                 [0, sc, 0],
-                 [0, 0, 1]],
-                [[cosa, sina,
-
-
 def bounds(s):
-    (x, y) = s.position
-    (w, h) = s.costume.size
-    scale = s.size / 100
+    (rx, ry) = s.costume.rotation_center
+    (width, height) = s.costume.size
+    rect = Rect((-rx, ry - height), s.costume.size)
+    assert rect.top == ry
 
-    # resize and transform
-    tlx = x - s.costume.rotation_center[0] * scale
-    tly = y + s.costume.rotation_center[1] * scale
-    w *= scale
-    h *= scale
-    rect = Rect(tlx, tly, w, h)
+    # scale
+    rect.scale_ip(s.size / 100)
 
     # rotate
-    if s.rotation_style == "normal":
-        # rect : has four corners.
-        # (x, y) : the centre of rotation.
+    theta = math.radians(s.direction)
+    sina = math.sin(theta)
+    cosa = math.cos(theta)
+    xs = []
+    ys = []
+    for (cx, cy) in (rect.topleft, rect.topright, rect.bottomleft,
+                     rect.bottomright):
+        rcx = cx * sina  -  cy * cosa
+        rcy = cx * cosa  +  cy * sina
+        xs.append(rcx)
+        ys.append(rcy)
 
-        a = math.radians(s.direction - 90)
+    left = min(xs)
+    right = max(xs)
+    bottom = min(ys)
+    top = max(ys)
+    width = right - left
+    height = top - bottom
 
-        rotate = lambda (x, y): (x + (cx - x)*cosa + (cy - y)*sina,
-                                 y - (cx-x)*sina + (cy-y)*cosa)
+    # translate
+    (x, y) = s.position
+    left += x
+    bottom += y
 
-        xs = []
-        ys = []
-        for (cx, cy) in (rect.topleft, rect.topright, rect.bottomleft,
-                         rect.bottomright):
-            (rot_cx, rot_cy) = rotate((cx, cy))
-            xs.append(rot_cx)
-            ys.append(rot_cy)
-
-        left = min(xs)
-        right = max(xs)
-        bottom = min(ys)
-        top = max(ys)
-
-        bottomleft = (left, bottom)
-
-        rot_w = right - left
-        rot_h = top - bottom
-
-        #assert rot_w == h * cosa  +  w * sina
-        #assert rot_h == h * sina  +  w * cosa
-
-        rect = Rect(bottomleft, (rot_w, rot_h))
-
-    return rect
+    return Rect(left, bottom, width, height)
 
 @command("touching")
 def touching_sprite(s, sprite):
@@ -848,8 +869,14 @@ def touching_sprite(s, sprite):
     if sprite == "edge":
         return (rect.left < -240 or rect.right > 240 or rect.top > 180 or
                 rect.bottom < -180)
+    elif sprite == "mouse-pointer":
+        mouse_pos = s.project.interpreter.screen.get_mouse_pos()
+        return (rect.collide_point(mouse_pos)
+                and s.project.interpreter.screen.touching_mouse(s))
     else:
-        return s.project.interpreter.screen.touching_sprite(s, sprite)
+        other_rect = bounds(sprite)
+        return (rect.collide_rect(other_rect) and
+                s.project.interpreter.screen.touching_sprite(s, sprite))
 
 @command("touching color")
 def touching_color(s, color):

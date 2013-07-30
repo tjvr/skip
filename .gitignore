@@ -5,3 +5,4 @@ dist/
 doc/_*
 tmp/
 *.swp
+.DS_Store

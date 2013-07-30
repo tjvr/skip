@@ -19,10 +19,14 @@ class PygameScreen(elda.Screen):
     def __init__(self):
         self.surface = pygame.display.set_mode(kurt.Stage.SIZE)
         pygame.display.set_caption(self.CAPTION)
+
+        self.pen_surface = pygame.Surface(kurt.Stage.SIZE).convert_alpha()
+        self.clear()
+
+        self.clock = pygame.time.Clock()
+
         self.running = True
         self.surfaces = {}
-        self.transformed_surfaces = {}
-        self.transform_cache = {}
 
         for constant in dir(pygame):
             if constant.startswith("K_"):
@@ -42,14 +46,7 @@ class PygameScreen(elda.Screen):
                 p_i = costume.image.pil_image
                 assert p_i.mode in ("RGB", "RGBA")
                 self.surfaces[costume.image] = pygame.image.fromstring(
-                        p_i.tostring(), p_i.size, p_i.mode)
-            if isinstance(scriptable, kurt.Sprite):
-                sprite = scriptable
-                self.transform_cache[sprite] = (sprite.size, sprite.direction)
-
-    def click_scriptable(self, pos):
-        # TODO sprites
-        return ScreenEvent("click_scriptable", self.project.stage)
+                        p_i.tostring(), p_i.size, p_i.mode).convert_alpha()
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -61,52 +58,63 @@ class PygameScreen(elda.Screen):
                 else:
                     name = pygame.key.name(event.key)
                     if name in kurt.Insert(None, "key").options():
-                        yield ScreenEvent('key_pressed', name)
+                        yield ScreenEvent("key_pressed", name)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 0:
-                    yield self.click_scriptable(event.pos)
+                    yield ScreenEvent("click")
 
     def tick(self):
+        self.clock.tick(40)
+
         events = list(self.handle_events())
         for event in self.interpreter.tick(events):
-            if event.kind in ('say', 'think'):
+            if event.kind == "clear":
+                self.clear()
+            elif event.kind == "stamp":
+                self.stamp(event.scriptable)
+            elif event.kind in ("say", "think"):
                 print "::", unicode(event)
             else:
                 print "::", event
 
-        self.draw(self.project.stage)
+        self.draw_sprite(self.project.stage, self.surface)
+        self.surface.blit(self.pen_surface, (0, 0))
         for actor in self.project.actors:
-            self.draw(actor)
+            if isinstance(actor, kurt.Scriptable):
+                if isinstance(actor, kurt.Stage) or actor.is_visible:
+                    self.draw_sprite(actor, self.surface)
 
         pygame.display.flip()
 
-    def draw(self, actor):
-        if isinstance(actor, kurt.Scriptable):
-            surface = self.surfaces[actor.costume.image]
-            if isinstance(actor, kurt.Stage):
-                rect = ((0, 0), kurt.Stage.SIZE)
-            else:
-                rect = tuple(self.rect_to_screen(elda.bounds(actor)))
-                angle = 90 - actor.direction
-                scale = actor.size / 100
-                surface = pygame.transform.rotozoom(surface, angle, scale)
-            self.surface.blit(surface, rect)
+    def draw_sprite(self, sprite, onto_surface):
+        surface = self.surfaces[sprite.costume.image]
+        if isinstance(sprite, kurt.Stage):
+            rect = ((0, 0), kurt.Stage.SIZE)
+        else:
+            rect = tuple(self.rect_to_screen(elda.bounds(sprite)))
+            angle = -(sprite.direction - 90)
+            scale = sprite.size / 100
+            surface = pygame.transform.rotozoom(surface, angle, scale)
+        onto_surface.blit(surface, rect)
 
     def pos_to_screen(self, (x, y)):
         return (x + 240,  180 - y)
     
     def rect_to_screen(self, rect):
-        return Rect(self.pos_to_screen(rect.bottomleft),
-                    self.pos_to_screen(rect.size))
+        return pygame.Rect(self.pos_to_screen(rect.topleft), rect.size)
 
     def pos_from_screen(self, (x, y)):
         return (x - 240, 180 - y)
 
-    # Script methods
+    # ScriptEvent handlers
 
-    def ask(self, s, prompt):
-        print "%s asks: %s" % (s.name, prompt)
-        yield raw_input("? ") # TODO
+    def clear(self):
+        self.pen_surface.fill((0,0,0,0))
+
+    def stamp(self, sprite):
+        self.draw_sprite(sprite, self.pen_surface)
+
+    # Script methods
 
     def get_mouse_pos(self):
         return self.pos_from_screen(pygame.mouse.get_pos())
@@ -120,35 +128,34 @@ class PygameScreen(elda.Screen):
         key = self.KEYS_BY_NAME[name]
         return pygame.key.get_pressed()[key]
 
-    def touching_sprite(self, s, sprite):
+    def touching_mouse(self, sprite):
+        return True # TODO filter collide
+
+    def touching_sprite(self, sprite, other):
+        return True # TODO filter collide
+
+    def touching_color(self, sprite, color):
         return False # TODO
 
-    def touching_color(self, s, color):
+    def touching_color_over(self, sprite, color, over):
         return False # TODO
 
-    def touching_color_over(self, s, color, over):
-        return False # TODO
-
-    def ask(self, s, prompt):
+    def ask(self, scriptable, prompt):
         # sync: yield while waiting for answer.
         while 0: # TODO
             yield
         yield ""
 
-    def play_sound(self, s, sound):
+    def play_sound(self, sound):
         pass # TODO
 
-    def stop_sounds(self, s):
+    def play_sound_until_done(self, sound):
+        self.play_sound(sound)
+        while 0: # sync: yield while playing
+            yield
+
+    def stop_sounds(self):
         pass # TODO
-
-
-def raw_input(prompt):
-    sys.stdout.write(prompt)
-
-    while select.select([sys.stdin], [], []):
-        yield
-
-    yield sys.stdin.readline()
 
 
 def main(project):
