@@ -6,14 +6,14 @@ import sys
 import pygame
 import pygame
 
-import elda
-from elda import Rect, ScreenEvent
+import skip
+from skip import Rect, ScreenEvent
 import kurt
 
 
 
-class PygameScreen(elda.Screen):
-    CAPTION = "elda"
+class PygameScreen(skip.Screen):
+    CAPTION = "Skip"
     KEYS_BY_NAME = {}
 
     def __init__(self):
@@ -36,7 +36,7 @@ class PygameScreen(elda.Screen):
 
     def set_project(self, project):
         self.project = project
-        self.interpreter = elda.Interpreter(project).bind(self)
+        self.interpreter = skip.Interpreter(project).bind(self)
         if project.name:
             pygame.display.set_caption(project.name + " : " + self.CAPTION)
         else:
@@ -91,7 +91,7 @@ class PygameScreen(elda.Screen):
         if isinstance(sprite, kurt.Stage):
             rect = ((0, 0), kurt.Stage.SIZE)
         else:
-            rect = tuple(self.rect_to_screen(elda.bounds(sprite)))
+            rect = tuple(self.rect_to_screen(skip.bounds(sprite)))
             angle = -(sprite.direction - 90)
             scale = sprite.size / 100
             surface = pygame.transform.rotozoom(surface, angle, scale)
