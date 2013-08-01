@@ -219,37 +219,31 @@ def main(project):
         text = text.rstrip().rstrip(";")
         if text:
             try:
-                script = kurt.text.parse_expression(text.strip(), sprite)
+                script = kurt.text.parse(text.strip(), sprite)
             except SyntaxError, e:
                 print "File %r, line %i" % (e.filename, e.lineno)
                 print "  %s" % e.text
                 print "  " + " " * e.offset + "^"
                 print "%s: %s" % (e.__class__.__name__, e.msg)
             else:
-                if isinstance(script, kurt.Block) and script.type.shape in (
-                        "reporter", "boolean"):
-                    print repr(interpreter.evaluate(sprite, script))
+                if len(script) == 1 and script[0].type.shape in ("reporter",
+                                                              "boolean"):
+                    print repr(interpreter.evaluate(sprite, script[0]))
                 else:
-                    if isinstance(script, kurt.Block):
-                        script = [script]
-                    if isinstance(script, list):
-                        script = kurt.Script(script)
-
-                        if script.blocks[0].type.shape == "hat":
-                            sprite.scripts.append(script)
-                            print "=>Ok."
-                        else:
-                            print "..."
-                            evaluating = [True]
-                            def done(thread, evaluating=evaluating):
-                                evaluating[0] = False
-                            interpreter.push_script(sprite, script,
-                                                    callback=done)
-                            if not script[-1].type.has_command("doForever"):
-                                while evaluating[0] and screen.running:
-                                    screen.tick()
+                    if script[0].type.shape == "hat":
+                        sprite.scripts.append(script)
+                        print "=>Ok."
                     else:
-                        print "=>Not a script!"
+                        print "..."
+                        evaluating = [True]
+                        def done(thread, evaluating=evaluating):
+                            evaluating[0] = False
+                        interpreter.push_script(sprite, script,
+                                                callback=done)
+                        if not script[-1].type.has_command("doForever"):
+                            while evaluating[0] and screen.running:
+                                screen.tick()
+
 
 
 if __name__ == "__main__":
