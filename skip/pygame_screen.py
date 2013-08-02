@@ -11,6 +11,11 @@ from skip import Rect, ScreenEvent
 import kurt
 
 
+# TODO touching colors
+# TODO text: say, ask, variable/list watchers
+# TODO sound
+
+
 
 def blit_alpha(dest, source, pos, opacity):
     """Hack: blit per-pixel alpha source onto dest with surface opacity."""
@@ -38,6 +43,7 @@ class PygameScreen(skip.Screen):
 
         self.running = True
         self.surfaces = {}
+        self.masks = {}
 
         for constant in dir(pygame):
             if constant.startswith("K_"):
@@ -56,8 +62,10 @@ class PygameScreen(skip.Screen):
             for costume in scriptable.costumes:
                 p_i = costume.image.pil_image
                 assert p_i.mode in ("RGB", "RGBA")
-                self.surfaces[costume.image] = pygame.image.fromstring(
+                surface = pygame.image.fromstring(
                         p_i.tostring(), p_i.size, p_i.mode).convert_alpha()
+                self.surfaces[costume.image] = surface
+                self.masks[costume.image] = pygame.mask.from_surface(surface)
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -95,7 +103,7 @@ class PygameScreen(skip.Screen):
         self.surface.blit(self.pen_surface, (0, 0))
         for actor in self.project.actors:
             if isinstance(actor, kurt.Scriptable):
-                if isinstance(actor, kurt.Stage) or actor.is_visible:
+                if actor.is_visible:
                     self.draw_sprite(actor, self.surface)
 
         pygame.display.flip()
@@ -119,9 +127,6 @@ class PygameScreen(skip.Screen):
 
     def pos_to_screen(self, (x, y)):
         return (x + 240,  180 - y)
-
-    def rect_to_screen(self, rect):
-        return pygame.Rect(self.pos_to_screen(rect.topleft), rect.size)
 
     def pos_from_screen(self, (x, y)):
         return (x - 240, 180 - y)
@@ -149,10 +154,18 @@ class PygameScreen(skip.Screen):
         return pygame.key.get_pressed()[key]
 
     def touching_mouse(self, sprite):
-        return True # TODO filter collide
+        mask = self.masks[sprite.costume.image]
+        (x, y) = self.pos_to_screen(skip.bounds(sprite).topleft)
+        (mx, my) = pygame.mouse.get_pos()
+        return bool(mask.get_at((int(mx - x), int(my - y))))
 
     def touching_sprite(self, sprite, other):
-        return True # TODO filter collide
+        mask = self.masks[sprite.costume.image]
+        other_mask = self.masks[other.costume.image]
+        (x, y) = self.pos_to_screen(skip.bounds(sprite).topleft)
+        (ox, oy) = self.pos_to_screen(skip.bounds(other).topleft)
+        offset = (int(ox - x), int(oy - y))
+        return bool(mask.overlap(other_mask, offset))
 
     def touching_color(self, sprite, color):
         return False # TODO
