@@ -6,9 +6,9 @@ import sys
 
 import pygame
 
+import kurt
 import skip
 from skip import Rect, ScreenEvent
-import kurt
 
 
 # TODO touching colors
@@ -39,7 +39,7 @@ def color_mask(surface, color):
 
 
 class PygameScreen(skip.Screen):
-    CAPTION = "Skip"
+    CAPTION = "SKIP"
     KEYS_BY_NAME = {}
 
     def __init__(self):
@@ -62,8 +62,7 @@ class PygameScreen(skip.Screen):
                 self.KEYS_BY_NAME[name] = key
 
     def set_project(self, project):
-        self.project = project
-        self.interpreter = skip.Interpreter(project).bind(self)
+        skip.Screen.set_project(self, project)
         if project.name:
             pygame.display.set_caption(project.name + " : " + self.CAPTION)
         else:
@@ -207,103 +206,14 @@ class PygameScreen(skip.Screen):
 
 
 
-def main(project):
-    sprite = project.sprites[0]
-
-    screen = PygameScreen()
-    screen.set_project(project)
-    screen.tick()
-
-    interpreter = screen.interpreter
-    interpreter.start()
-
-    print "Ctrl+D or `;` to evaluate input"
-    print "Extra commands: start, stop"
-    print "=>%s" % sprite.name
-    while screen.running:
-        print "-----"
-        text = ""
-        while not text.endswith(";"):
-            line = None
-            while not line:
-                screen.tick()
-                if not screen.running:
-                    return
-
-                if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-                    line = sys.stdin.readline()
-                    if not line: # stdin closed
-                        line = ";"
-
-            if text:
-                text += "\n"
-            text += line.strip()
-
-            if text == "start":
-                interpreter.start()
-                text = ""
-            elif text == "stop":
-                interpreter.stop()
-                text = ""
-            elif text == "save":
-                path = project.save()
-                print "Saved to %r" % path
-                text = ""
-            elif text.startswith("/"):
-                name = text[1:]
-                if name:
-                    if name == "Stage":
-                        sprite = project.stage
-                    else:
-                        sprite = project.get_sprite(name) or sprite
-                    print "=>%s" % sprite.name
-                else:
-                    for other in [project.stage] + project.sprites:
-                        print other.name + (" *" if other == sprite else "")
-                text = ""
-
-            if not text:
-                break
-
-        text = text.rstrip().rstrip(";")
-        if text:
-            try:
-                script = kurt.text.parse(text.strip(), sprite)
-            except SyntaxError, e:
-                print "File %r, line %i" % (e.filename, e.lineno)
-                print "  %s" % e.text
-                print "  " + " " * e.offset + "^"
-                print "%s: %s" % (e.__class__.__name__, e.msg)
-            else:
-                if len(script) == 1 and script[0].type.shape in ("reporter",
-                                                              "boolean"):
-                    print repr(interpreter.evaluate(sprite, script[0]))
-                else:
-                    if script[0].type.shape == "hat":
-                        sprite.scripts.append(script)
-                        print "=>Ok."
-                    else:
-                        print "..."
-                        evaluating = [True]
-                        def done(thread, evaluating=evaluating):
-                            evaluating[0] = False
-                        interpreter.push_script(sprite, script,
-                                                callback=done)
-                        if not script[-1].type.has_command("doForever"):
-                            while evaluating[0] and screen.running:
-                                screen.tick()
-
 if __name__ == "__main__":
+    project = None
     if len(sys.argv) == 2:
         project = kurt.Project.load(sys.argv[1])
-    else:
-        project = kurt.Project()
-        project.sprites = [kurt.Sprite(project, "Sprite1")]
 
     def signal_handler(signal, frame):
         sys.exit(0)
     signal.signal(signal.SIGINT, signal_handler)
 
-    main(project)
-
+    skip.main(project, PygameScreen())
 

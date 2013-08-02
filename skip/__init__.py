@@ -4,6 +4,8 @@ import inspect
 import math
 import operator as op
 import random
+import select
+import sys
 import time
 
 import kurt
@@ -288,7 +290,7 @@ class Interpreter(object):
 
 
 
-#-- Screen --#
+#-- Rect --#
 
 class Rect(object):
     """An area of screen with size and position. Uses Scratch co-ordinates.
@@ -411,6 +413,9 @@ class Rect(object):
                 self.bottom + self.height > other.bottom)
 
 
+
+#-- Screen --#
+
 class ScriptEvent(object):
     """Yielded from a block function to the Interpreter.
 
@@ -448,6 +453,18 @@ class ScreenEvent(object):
 
 
 class Screen(object):
+    def set_project(self, project):
+        self.project = project
+        self.interpreter = Interpreter(project).bind(self)
+        self.running = True
+
+    def tick(self):
+        """Execute and render one frame of the interpreter."""
+        for event in self.interpreter.tick(events):
+            pass # Override
+
+    # Script methods
+
     def get_mouse_pos(self):
         return (0, 0)
 
@@ -1107,66 +1124,91 @@ operator("contains", lambda list_, item: item in list_.items)
 
 #-- REPL --#
 
-class ConsoleScreen(Screen):
-    def set_project(self, project):
-        self.project = project
-        self.interpreter = Interpreter(project).bind(self)
-
-    def tick(self):
-        events = []
-        for event in self.interpreter.tick(events):
-            if event.kind in ('say', 'think'):
-                print unicode(event)
-            else:
-                print event
-
-    @classmethod
-    def run(cls, project):
-        """Run the project until all the scripts die."""
-        scr = cls()
-        scr.set_project(project)
-        scr.interpreter.start()
-        while scr.interpreter.threads:
-            scr.tick()
-
-    # Script methods
-
-    def ask(self, s, prompt):
-        print "%s asks: %s" % (s.name, prompt)
-        yield raw_input("? ")
-
-
-def main(sprite=None):
-    if sprite is None:
+def main(project, screen):
+    if project is None:
         project = kurt.Project()
-        sprite = kurt.Sprite(project, "Sprite1")
-        project.sprites = [sprite]
-    else:
-        project = sprite.project
+        project.sprites = [kurt.Sprite(project, "Sprite1")]
+    sprite = project.sprites[0]
 
-    screen = ConsoleScreen()
     screen.set_project(project)
+    screen.tick()
 
-    interpreter = sprite.project.interpreter
-    screen = interpreter.screen
+    interpreter = screen.interpreter
     interpreter.start()
 
-    print "Semicolon ';' terminates input"
-    while 1:
-        text = line = ""
-        while not line.endswith(";"):
-            line = raw_input("> ")
-            text += line + "\n"
-        text = text.rstrip().rstrip(";")
-        script = kurt.text.parse_expression(text.strip(), sprite)
-        if isinstance(script, kurt.Block) and script.type.shape in ("reporter",
-                "boolean"):
-            print repr(interpreter.evaluate(sprite, script))
-        else:
-            if isinstance(script, kurt.Block):
-                script = [script]
-            script = kurt.Script(script)
-            interpreter.push_script(sprite, script)
-            while interpreter.threads:
+    print "Ctrl+D or `;` to evaluate input"
+    print "Extra commands: start, stop"
+    print "=>%s" % sprite.name
+    while screen.running:
+        print "-----"
+        text = ""
+        while not text.endswith(";"):
+            line = None
+            while not line:
                 screen.tick()
+                if not screen.running:
+                    return
+
+                if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+                    line = sys.stdin.readline()
+                    if not line: # stdin closed
+                        line = ";"
+
+            if text:
+                text += "\n"
+            text += line.strip()
+
+            if text == "start":
+                interpreter.start()
+                text = ""
+            elif text == "stop":
+                interpreter.stop()
+                text = ""
+            elif text == "save":
+                path = project.save()
+                print "Saved to %r" % path
+                text = ""
+            elif text.startswith("/"):
+                name = text[1:]
+                if name:
+                    if name == "Stage":
+                        sprite = project.stage
+                    else:
+                        sprite = project.get_sprite(name) or sprite
+                    print "=>%s" % sprite.name
+                else:
+                    for other in [project.stage] + project.sprites:
+                        print other.name + (" *" if other == sprite else "")
+                text = ""
+
+            if not text:
+                break
+
+        text = text.rstrip().rstrip(";")
+        if text:
+            try:
+                script = kurt.text.parse(text.strip(), sprite)
+            except SyntaxError, e:
+                print "File %r, line %i" % (e.filename, e.lineno)
+                print "  %s" % e.text
+                print "  " + " " * e.offset + "^"
+                print "%s: %s" % (e.__class__.__name__, e.msg)
+            else:
+                if len(script) == 1 and script[0].type.shape in ("reporter",
+                                                              "boolean"):
+                    print repr(interpreter.evaluate(sprite, script[0]))
+                else:
+                    if script[0].type.shape == "hat":
+                        sprite.scripts.append(script)
+                        print "=>Ok."
+                    else:
+                        print "..."
+                        evaluating = [True]
+                        def done(thread, evaluating=evaluating):
+                            evaluating[0] = False
+                        interpreter.push_script(sprite, script,
+                                                callback=done)
+                        if not script[-1].type.has_command("doForever"):
+                            while evaluating[0] and screen.running:
+                                screen.tick()
 
