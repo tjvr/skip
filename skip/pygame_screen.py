@@ -71,7 +71,10 @@ class PygameScreen(skip.Screen):
                         yield ScreenEvent("key_pressed", name)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
-                    yield ScreenEvent("click")
+                    yield ScreenEvent("mouse_down")
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    yield ScreenEvent("mouse_up")
 
     def tick(self):
         self.clock.tick(40)

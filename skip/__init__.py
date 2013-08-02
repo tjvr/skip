@@ -58,6 +58,10 @@ class Interpreter(object):
         self.stop()
         reset_timer(self)
 
+        self.drag_sprite = None
+        self.drag_offset = (0, 0)
+        self.has_dragged = False
+
     def bind(self, screen):
         self.screen = screen
         return self
@@ -121,11 +125,20 @@ class Interpreter(object):
         Don't call more than 40 times per second.
 
         """
+        if self.drag_sprite:
+            (mx, my) = self.screen.get_mouse_pos()
+            (ox, oy) = self.drag_offset
+            new_position = (mx + ox, my + oy)
+            if self.drag_sprite.position != new_position:
+                self.has_dragged = True
+                self.drag_sprite.position = new_position
+
         for event in events:
             if event.kind == "key_pressed":
                 assert event.value in kurt.Insert(None, "key").options()
                 self.trigger_hats("whenKeyPressed", event.value)
-            elif event.kind == "click":
+
+            elif event.kind == "mouse_down":
                 mouse_pos = self.screen.get_mouse_pos()
                 for sprite in reversed(self.project.sprites):
                     rect = bounds(sprite)
@@ -135,7 +148,22 @@ class Interpreter(object):
                             break
                 else:
                     scriptable = self.project.stage
-                self.trigger_scriptable_hats(scriptable, "whenClicked")
+
+                if scriptable.is_draggable:
+                    (mx, my) = self.screen.get_mouse_pos()
+                    (x, y) = scriptable.position
+                    self.drag_offset = (x - mx, y - my)
+                    self.drag_sprite = scriptable
+                    self.has_dragged = False
+                else:
+                    self.trigger_scriptable_hats(scriptable, "whenClicked")
+
+            elif event.kind == "mouse_up":
+                if self.drag_sprite:
+                    if not self.has_dragged:
+                        self.trigger_scriptable_hats(self.drag_sprite,
+                                                     "whenClicked")
+                    self.drag_sprite = None
 
         remove_threads = []
         while 1:
