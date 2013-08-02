@@ -1127,7 +1127,12 @@ operator("contains", lambda list_, item: item in list_.items)
 def main(project, screen):
     if project is None:
         project = kurt.Project()
-        project.sprites = [kurt.Sprite(project, "Sprite1")]
+        sprite = kurt.Sprite(project, "Sprite1")
+        sprite.costume = kurt.Costume("square",
+                                      kurt.Image.new((60, 60), (0, 0, 0)))
+        project.sprites = [sprite]
+        project.convert("scratch14")
+
     sprite = project.sprites[0]
 
     screen.set_project(project)
