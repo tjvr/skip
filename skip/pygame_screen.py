@@ -27,6 +27,16 @@ def blit_alpha(dest, source, pos, opacity):
     temp.set_alpha(opacity)
     dest.blit(temp, pos)
 
+def color_mask(surface, color):
+    if isinstance(color, kurt.Color):
+        color = color.value
+    surface = surface.convert()
+    surface.set_colorkey(color)
+    color_mask = pygame.mask.from_surface(surface)
+    color_mask.invert()
+    return color_mask
+
+
 
 class PygameScreen(skip.Screen):
     CAPTION = "Skip"
@@ -168,6 +178,11 @@ class PygameScreen(skip.Screen):
         return bool(mask.overlap(other_mask, offset))
 
     def touching_color(self, sprite, color):
+        mask = self.masks[sprite.costume.image]
+        (x, y) = self.pos_to_screen(skip.bounds(sprite).topleft)
+        surface = self.surfaces[self.project.stage.costume.image]
+        if color_mask(surface, color).overlap(mask, (int(x), int(y))):
+            return True
         return False # TODO
 
     def touching_color_over(self, sprite, color, over):
