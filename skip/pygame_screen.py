@@ -1,6 +1,7 @@
 """A Pygame-based view for a Scratch interpreter."""
 
 import select
+import signal
 import sys
 
 import pygame
@@ -177,6 +178,7 @@ class PygameScreen(skip.Screen):
         pass # TODO
 
 
+
 def main(project):
     sprite = project.sprites[0]
 
@@ -263,14 +265,17 @@ def main(project):
                             while evaluating[0] and screen.running:
                                 screen.tick()
 
-
-
 if __name__ == "__main__":
     if len(sys.argv) == 2:
         project = kurt.Project.load(sys.argv[1])
     else:
         project = kurt.Project()
         project.sprites = [kurt.Sprite(project, "Sprite1")]
+
+    def signal_handler(signal, frame):
+        sys.exit(0)
+    signal.signal(signal.SIGINT, signal_handler)
+
     main(project)
 
 
