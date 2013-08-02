@@ -4,12 +4,22 @@ import select
 import sys
 
 import pygame
-import pygame
 
 import skip
 from skip import Rect, ScreenEvent
 import kurt
 
+
+
+def blit_alpha(dest, source, pos, opacity):
+    """Hack: blit per-pixel alpha source onto dest with surface opacity."""
+    # http://www.nerdparadise.com/tech/python/pygame/blitopacity/
+    (x, y) = pos
+    temp = pygame.Surface((source.get_width(), source.get_height())).convert()
+    temp.blit(dest, (-x, -y))
+    temp.blit(source, (0, 0))
+    temp.set_alpha(opacity)
+    dest.blit(temp, pos)
 
 
 class PygameScreen(skip.Screen):
@@ -89,17 +99,23 @@ class PygameScreen(skip.Screen):
     def draw_sprite(self, sprite, onto_surface):
         surface = self.surfaces[sprite.costume.image]
         if isinstance(sprite, kurt.Stage):
-            rect = ((0, 0), kurt.Stage.SIZE)
+            pos = (0, 0)
         else:
-            rect = tuple(self.rect_to_screen(skip.bounds(sprite)))
+            pos = self.pos_to_screen(skip.bounds(sprite).topleft)
             angle = -(sprite.direction - 90)
             scale = sprite.size / 100
             surface = pygame.transform.rotozoom(surface, angle, scale)
-        onto_surface.blit(surface, rect)
+
+        ghost = sprite.graphic_effects['ghost']
+        if ghost != 0:
+            opacity = (100 - abs(ghost)) * 2.55
+            blit_alpha(onto_surface, surface, pos, opacity)
+        else:
+            onto_surface.blit(surface, pos)
 
     def pos_to_screen(self, (x, y)):
         return (x + 240,  180 - y)
-    
+
     def rect_to_screen(self, rect):
         return pygame.Rect(self.pos_to_screen(rect.topleft), rect.size)
 
