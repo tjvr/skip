@@ -10,6 +10,20 @@ import kurt
 
 
 
+#-- Util --#
+
+def str_is_number(value):
+    try:
+        value = float(value)
+        if value == int(value):
+            value = int(value)
+    except (TypeError, ValueError):
+        return False
+    else:
+        return True
+
+
+
 #-- Interpreter --#
 
 class Thread(object):
@@ -217,10 +231,12 @@ class Interpreter(object):
                         value = int(value)
                 except (TypeError, ValueError):
                     pass
+
             if insert.shape in ("string", "readonly-menu"):
                 value = unicode(value)
-            if insert.kind in ("spriteOrStage", "spriteOrMouse",
-                                 "stageOrThis", "spriteOnly"):
+
+            if insert.kind in ("spriteOrStage", "spriteOrMouse", "stageOrThis",
+                               "spriteOnly", "touching"):
                 if value not in ("mouse-pointer", "edge"):
                     value = (self.project.stage if value == "Stage"
                              else self.project.get_sprite(value))
@@ -235,7 +251,10 @@ class Interpreter(object):
                 else:
                     value = s.project.lists[value]
             elif insert.kind == "sound":
-                value = s.sounds[value]
+                for sound in s.sounds:
+                    if sound.name == value:
+                        value = sound
+                        break
 
         return value
 
@@ -458,7 +477,10 @@ def command(bt):
 
 def operator(bt, func):
     def wrapped(s, *args):
-        return func(*args)
+        try:
+            return func(*args)
+        except IndexError:
+            return ""
     return command(bt)(wrapped)
 
 def sensing(bt, method_name, after=None):
@@ -517,8 +539,8 @@ def go_to_sprite(s, sprite):
 @command("glide secs to x: y:")
 def glide_to_for_secs(s, duration, end_x, end_y):
     (start_x, start_y) = s.position
-    now = time.time()
-    end_time = now + secs
+    start_time = now = time.time()
+    end_time = now + duration
     while now <= end_time:
         t = float(now - start_time) / duration
         s.position = (start_x * (1 - t)  +  end_x * t,
@@ -566,9 +588,9 @@ def get_direction(s):
 ## Looks
 
 @command("switch to costume")
-def switch_costume(s, name):
-    if isinstance(name, (int, float)):
-        s.costume_index = int(round(name)) - 1
+def set_costume(s, name):
+    if str_is_number(name):
+        s.costume_index = int(round(float(name))) % len(s.costumes) - 1
     else:
         for costume in s.costumes:
             if costume.name == name:
@@ -649,7 +671,7 @@ def go_back_by(s, n):
 
 @command("switch backdrop to")
 def switch_backdrop(s, name):
-    return switch_costume(s.project.stage, name)
+    return set_costume(s.project.stage, name)
 
 @command("next backdrop")
 def next_backdrop(s):
@@ -803,10 +825,13 @@ def broadcast_and_wait(s, message):
 @command("if")
 def if_(s, condition, body):
     if condition:
+        body = body or []
         yield s.project.interpreter.run_script(s, body)
 
 @command("if else")
 def if_else(s, condition, body, other_body):
+    body = body or []
+    other_body = other_body or []
     yield s.project.interpreter.run_script(s,
                                            body if condition else other_body)
 
@@ -909,8 +934,11 @@ sensing("key pressed?", "is_key_pressed")
 
 @command("distance to")
 def distance_to(s, sprite):
-    (x, y) = self.pos
-    (ox, oy) = sprite.pos
+    (x, y) = s.position
+    if sprite == "mouse-pointer":
+        (ox, oy) = s.project.interpreter.screen.get_mouse_pos()
+    else:
+        (ox, oy) = sprite.position
     return math.sqrt((x - ox) ** 2 + (y - oy) ** 2)
 
 @command("reset timer")
@@ -931,8 +959,11 @@ def attribute_of(s, name, sprite):
         'size': get_size,
         'volume': get_volume,
     }
-    f = attr_functions[name]
-    return f(sprite)
+    if name in attr_functions:
+        f = attr_functions[name]
+        return f(sprite)
+    else:
+        return sprite.variables[name].value
 
 @command("loudness")
 def loudness(s):
@@ -956,7 +987,7 @@ operator("or", op.or_)
 operator("not", op.not_)
 
 operator("join", op.add)
-operator("letter of", lambda i, string: string[i - 1])
+operator("letter of", lambda i, string: string[int(i - 1)])
 operator("stringLength:", len)
 
 operator("mod", op.mod)
@@ -1038,9 +1069,9 @@ def replace_item_with(s, index, list_, item):
         index = 0
     elif index == 'any':
         index = random.randint(1, len(l.items))
-    list_.items[index - 1] = item
+    list_.items[int(index - 1)] = item
 
-operator("item of", lambda i, list_: list_.items[i - 1])
+operator("item of", lambda i, list_: list_.items[int(i - 1)])
 operator("lineCountOfList:", lambda list_: len(list_.items))
 operator("contains", lambda list_, item: item in list_.items)
 

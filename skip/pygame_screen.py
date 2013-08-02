@@ -70,7 +70,7 @@ class PygameScreen(skip.Screen):
                     if name in kurt.Insert(None, "key").options():
                         yield ScreenEvent("key_pressed", name)
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 0:
+                if event.button == 1:
                     yield ScreenEvent("click")
 
     def tick(self):
