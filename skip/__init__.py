@@ -229,12 +229,12 @@ class Interpreter(object):
                 return []
 
             if value.type not in self.COMMANDS:
-                if hasattr(value.type, '_workaround'):
+                if getattr(value.type, '_workaround', None):
                     value = value.type._workaround(value)
                     if not value:
-                        raise KeyError, value.type
+                        raise kurt.BlockNotSupported(value.type)
                 else:
-                    raise KeyError, value.type
+                    raise kurt.BlockNotSupported(value.type)
 
             f = self.COMMANDS[value.type]
 
@@ -1250,21 +1250,24 @@ def main(project, screen):
                 print "  " + " " * e.offset + "^"
                 print "%s: %s" % (e.__class__.__name__, e.msg)
             else:
-                if len(script) == 1 and script[0].type.shape in ("reporter",
-                                                              "boolean"):
-                    print repr(interpreter.evaluate(sprite, script[0]))
-                else:
-                    if script[0].type.shape == "hat":
-                        sprite.scripts.append(script)
-                        print "=>Ok."
+                try:
+                    if len(script) == 1 and script[0].type.shape in ("reporter",
+                                                                  "boolean"):
+                        print repr(interpreter.evaluate(sprite, script[0]))
                     else:
-                        print "..."
-                        evaluating = [True]
-                        def done(thread, evaluating=evaluating):
-                            evaluating[0] = False
-                        interpreter.push_script(sprite, script,
-                                                callback=done)
-                        if not script[-1].type.has_command("doForever"):
-                            while evaluating[0] and screen.running:
-                                screen.tick()
+                        if script[0].type.shape == "hat":
+                            sprite.scripts.append(script)
+                            print "=>Ok."
+                        else:
+                            print "..."
+                            evaluating = [True] # pass bool by reference
+                            def done(thread, evaluating=evaluating):
+                                evaluating[0] = False
+                            interpreter.push_script(sprite, script,
+                                                    callback=done)
+                            if not script[-1].type.has_command("doForever"):
+                                while evaluating[0] and screen.running:
+                                    screen.tick()
+                except kurt.BlockNotSupported, e:
+                    print "%s: %s" % (e.__class__.__name__, e.message)
 
