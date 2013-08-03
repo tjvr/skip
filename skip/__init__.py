@@ -81,6 +81,7 @@ class Interpreter(object):
         scriptable.instrument = 1
 
         if isinstance(scriptable, kurt.Sprite):
+            scriptable.is_pen_down = False
             scriptable.pen_size = 1
             scriptable.pen_color = kurt.Color("#00f")
             scriptable.pen_hue = 0   # TODO ?
@@ -466,6 +467,9 @@ class Screen(object):
 
     # Script methods
 
+    def draw_line(self, start, end, color, size):
+        pass
+
     def get_mouse_pos(self):
         return (0, 0)
 
@@ -546,7 +550,7 @@ def move(s, distance):
     (x, y) = s.position
     x += math.sin(radians) * distance
     y += math.cos(radians) * distance
-    s.position = (x, y)
+    set_position(s, x, y)
 
 @command("turn @turnLeft degrees")
 def turn_left(s, angle):
@@ -572,15 +576,22 @@ def point_towards(s, sprite):
     s.direction = math.degrees(math.atan2(dx, dy))
 
 @command("go to x: y:")
-def go_to(s, x, y):
+def set_position(s, x, y=None):
+    if y is None:
+        (x, y) = x
+    if s.is_pen_down:
+        s.project.interpreter.screen.draw_line(s.position, (x, y), s.pen_color,
+                                               s.pen_size)
+        # TODO pen_shade ?
+        # TODO pen_hue ?
     s.position = (x, y)
 
 @command("go to")
 def go_to_sprite(s, sprite):
     if sprite == "mouse-pointer":
-        s.position = s.project.interpreter.screen.get_mouse_pos()
+        set_position(s, s.project.interpreter.screen.get_mouse_pos())
     else:
-        s.position = sprite.position
+        set_position(s, sprite.position)
 
 @command("glide secs to x: y:")
 def glide_to_for_secs(s, duration, end_x, end_y):
@@ -589,8 +600,8 @@ def glide_to_for_secs(s, duration, end_x, end_y):
     end_time = now + duration
     while now <= end_time:
         t = float(now - start_time) / duration
-        s.position = (start_x * (1 - t)  +  end_x * t,
-                      start_y * (1 - t)  +  end_y * t)
+        set_position(s, start_x * (1 - t)  +  end_x * t,
+                        start_y * (1 - t)  +  end_y * t)
         yield
         now = time.time()
 
@@ -598,23 +609,23 @@ def glide_to_for_secs(s, duration, end_x, end_y):
 def change_x(s, delta):
     (x, y) = s.position
     x += delta
-    s.position = (x, y)
+    set_position(s, x, y)
 
 @command("set x to")
 def set_x(s, value):
     (x, y) = s.position
-    s.position = (value, y)
+    set_position(s, value, y)
 
 @command("change y by")
 def change_y(s, delta):
     (x, y) = s.position
     y += delta
-    s.position = (x, y)
+    set_position(s, x, y)
 
 @command("set y to")
 def set_y(s, value):
     (x, y) = s.position
-    s.position = (x, value)
+    set_position(s, x, value)
 
 # TODO if on edge, bounce
 
@@ -797,7 +808,7 @@ def pen_down(s):
 
 @command("pen up")
 def pen_up(s):
-    s.is_pen_up = False
+    s.is_pen_down = False
 
 @command("penColor:")
 def set_pen_color(s, color):

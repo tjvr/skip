@@ -11,7 +11,6 @@ import skip
 from skip import Rect, ScreenEvent
 
 
-# TODO pen drawing
 # TODO text: say, ask, variable/list watchers
 # TODO sound
 
@@ -140,7 +139,7 @@ class PygameScreen(skip.Screen):
             onto_surface.blit(surface, pos)
 
     def pos_to_screen(self, (x, y)):
-        return (x + 240,  180 - y)
+        return (int(x) + 240,  180 - int(y))
 
     def pos_from_screen(self, (x, y)):
         return (x - 240, 180 - y)
@@ -168,6 +167,11 @@ class PygameScreen(skip.Screen):
         self.draw_sprite(sprite, self.pen_surface)
 
     # Script methods
+
+    def draw_line(self, start, end, color, size):
+        start = self.pos_to_screen(start)
+        end = self.pos_to_screen(end)
+        pygame.draw.line(self.pen_surface, color.value, start, end, size)
 
     def get_mouse_pos(self):
         return self.pos_from_screen(pygame.mouse.get_pos())
