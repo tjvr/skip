@@ -235,9 +235,5 @@ if __name__ == "__main__":
     if len(sys.argv) == 2:
         project = kurt.Project.load(sys.argv[1])
 
-    def signal_handler(signal, frame):
-        sys.exit(0)
-    signal.signal(signal.SIGINT, signal_handler)
-
     skip.main(project, PygameScreen())
 

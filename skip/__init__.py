@@ -5,6 +5,7 @@ import math
 import operator as op
 import random
 import select
+import signal
 import sys
 import time
 
@@ -257,15 +258,21 @@ class Interpreter(object):
 
         if insert:
             if isinstance(value, basestring):
-                try:
-                    value = float(value)
-                    if value == int(value):
-                        value = int(value)
-                except (TypeError, ValueError):
-                    pass
+                if insert.shape in ("string", "readonly-menu"):
+                    value = unicode(value)
+                elif insert.shape == "number":
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        value = 0
+                elif insert.shape == "number-menu":
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        pass
 
-            if insert.shape in ("string", "readonly-menu"):
-                value = unicode(value)
+            if isinstance(value, float) and value == int(value):
+                value = int(value)
 
             if insert.kind in ("spriteOrStage", "spriteOrMouse", "stageOrThis",
                                "spriteOnly", "touching"):
@@ -1153,6 +1160,11 @@ def main(project, screen):
     interpreter = screen.interpreter
     interpreter.start()
 
+    def signal_handler(signal, frame):
+        sys.exit(0)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    log = []
     print "Ctrl+D or `;` to evaluate input"
     print "Extra commands: start, stop"
     print "=>%s" % sprite.name
@@ -1185,6 +1197,30 @@ def main(project, screen):
                 path = project.save()
                 print "Saved to %r" % path
                 text = ""
+            elif text == "scripts":
+                print
+                print "\n\n".join(s.stringify() for s in sprite.scripts)
+                print
+                text = ""
+            elif text == "variables":
+                print "\n".join("* "+name for name in sprite.project.variables)
+                print "--"
+                print "\n".join("* "+name for name in sprite.variables)
+                text = ""
+            elif text == "lists":
+                print "\n".join("* "+name for name in sprite.project.lists)
+                print "--"
+                print "\n".join("* "+name for name in sprite.lists)
+                text = ""
+            elif text == "history":
+                print "\n\n".join(log)
+                text = ""
+            elif text == "exit":
+                sys.exit(0)
+            elif text == "sprites":
+                print "Use `/`"
+                print "`/Sprite1` to select sprite by name"
+                text = ""
             elif text.startswith("/"):
                 name = text[1:]
                 if name:
@@ -1203,6 +1239,7 @@ def main(project, screen):
 
         text = text.rstrip().rstrip(";")
         if text:
+            log.append(text)
             try:
                 script = kurt.text.parse(text.strip(), sprite)
             except SyntaxError, e:
