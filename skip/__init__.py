@@ -923,7 +923,7 @@ def bounds(s):
     assert rect.top == ry
 
     # scale
-    rect.scale_ip(s.size / 100)
+    rect.scale_ip(s.size / 100.0)
 
     # rotate
     theta = math.radians(s.direction)
@@ -1165,8 +1165,10 @@ def main(project, screen):
     signal.signal(signal.SIGINT, signal_handler)
 
     log = []
-    print "Ctrl+D or `;` to evaluate input"
-    print "Extra commands: start, stop"
+    print "Other commands:"
+    print "  " + ", ".join(['start', 'stop', 'save', 'history', 'scripts',
+                     'variables', 'lists', 'sprites', 'exit'])
+    print "Ctrl+D or `;` to evaluate blocks"
     print "=>%s" % sprite.name
     while screen.running:
         print "-----"

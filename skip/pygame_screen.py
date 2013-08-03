@@ -20,7 +20,8 @@ def blit_alpha(dest, source, pos, opacity):
     """Hack: blit per-pixel alpha source onto dest with surface opacity."""
     # http://www.nerdparadise.com/tech/python/pygame/blitopacity/
     (x, y) = pos
-    temp = pygame.Surface((source.get_width(), source.get_height())).convert()
+    temp = pygame.Surface((source.get_width(),
+                           source.get_height())).convert()
     temp.blit(dest, (-x, -y))
     temp.blit(source, (0, 0))
     temp.set_alpha(opacity)
@@ -44,15 +45,7 @@ class PygameScreen(skip.Screen):
     def __init__(self):
         self.surface = pygame.display.set_mode(kurt.Stage.SIZE)
         pygame.display.set_caption(self.CAPTION)
-
-        self.pen_surface = pygame.Surface(kurt.Stage.SIZE).convert_alpha()
-        self.clear()
-
         self.clock = pygame.time.Clock()
-
-        self.running = True
-        self.surfaces = {}
-        self.masks = {}
 
         for constant in dir(pygame):
             if constant.startswith("K_"):
@@ -61,6 +54,15 @@ class PygameScreen(skip.Screen):
                 self.KEYS_BY_NAME[name] = key
 
     def set_project(self, project):
+        self.running = True
+
+        self.pen_surface = pygame.Surface(kurt.Stage.SIZE).convert_alpha()
+        self.clear()
+
+        self.surfaces = {}
+        self.masks = {}
+        self.sounds = {}
+
         skip.Screen.set_project(self, project)
         if project.name:
             pygame.display.set_caption(project.name + " : " + self.CAPTION)
@@ -116,14 +118,29 @@ class PygameScreen(skip.Screen):
 
         pygame.display.flip()
 
+    def get_sprite_mask(self, sprite, color=None):
+        if (sprite.direction != 0 and sprite.size != 1) or color is not None:
+            surface = self.surfaces[sprite.costume.image]
+            #if sprite.direction != 90 and sprite.size != 100:
+            angle = -(sprite.direction - 90)
+            scale = sprite.size / 100.0
+            surface = pygame.transform.rotozoom(surface, angle, scale)
+            if color is None:
+                return pygame.mask.from_surface(surface)
+            else:
+                return color_mask(surface, color)
+        else:
+            return self.masks[sprite.costume.image]
+
     def draw_sprite(self, sprite, onto_surface, offset=None):
         surface = self.surfaces[sprite.costume.image]
         if isinstance(sprite, kurt.Stage):
             pos = (0, 0)
         else:
             pos = self.pos_to_screen(skip.bounds(sprite).topleft)
+            #if sprite.direction != 90 and sprite.size != 100:
             angle = -(sprite.direction - 90)
-            scale = sprite.size / 100
+            scale = sprite.size / 100.0
             surface = pygame.transform.rotozoom(surface, angle, scale)
 
         if offset:
@@ -186,30 +203,30 @@ class PygameScreen(skip.Screen):
         return pygame.key.get_pressed()[key]
 
     def touching_mouse(self, sprite):
-        mask = self.masks[sprite.costume.image]
+        mask = self.get_sprite_mask(sprite)
         (x, y) = self.pos_to_screen(skip.bounds(sprite).topleft)
         (mx, my) = pygame.mouse.get_pos()
         return bool(mask.get_at((int(mx - x), int(my - y))))
 
     def touching_sprite(self, sprite, other):
-        mask = self.masks[sprite.costume.image]
-        other_mask = self.masks[other.costume.image]
+        mask = self.get_sprite_mask(sprite)
+        other_mask = self.get_sprite_mask(other)
+        (x, y) = self.pos_to_screen(skip.bounds(sprite).topleft)
         (ox, oy) = self.pos_to_screen(skip.bounds(other).topleft)
         offset = (int(ox - x), int(oy - y))
         return bool(mask.overlap(other_mask, offset))
 
     def touching_color(self, sprite, color):
-        stage_surface = self.draw_stage_without_sprite(sprite)
-        stage_mask = color_mask(stage_surface, color)
-        sprite_mask = self.masks[sprite.costume.image]
-        return bool(stage_mask.overlap(sprite_mask, (0, 0)))
+        rendered_surface = self.draw_stage_without_sprite(sprite)
+        rendered_mask = color_mask(rendered_surface, color)
+        sprite_mask = self.get_sprite_mask(sprite)
+        return bool(rendered_mask.overlap(sprite_mask, (0, 0)))
 
     def touching_color_over(self, sprite, color, over):
-        stage_surface = self.draw_stage_without_sprite(sprite)
-        stage_mask = color_mask(stage_surface, over)
-        sprite_surface = self.surfaces[sprite.costume.image]
-        sprite_mask = color_mask(sprite_surface, color)
-        return bool(stage_mask.overlap(sprite_mask, (0, 0)))
+        rendered_surface = self.draw_stage_without_sprite(sprite)
+        rendered_mask = color_mask(rendered_surface, over)
+        sprite_mask = self.get_sprite_mask(sprite, color)
+        return bool(rendered_mask.overlap(sprite_mask, (0, 0)))
 
     def ask(self, scriptable, prompt):
         # sync: yield while waiting for answer.
