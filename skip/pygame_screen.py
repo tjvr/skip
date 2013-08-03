@@ -12,7 +12,6 @@ from skip import Rect, ScreenEvent
 
 
 # TODO pen drawing
-# TODO touching colors
 # TODO text: say, ask, variable/list watchers
 # TODO sound
 
@@ -118,7 +117,7 @@ class PygameScreen(skip.Screen):
 
         pygame.display.flip()
 
-    def draw_sprite(self, sprite, onto_surface):
+    def draw_sprite(self, sprite, onto_surface, offset=None):
         surface = self.surfaces[sprite.costume.image]
         if isinstance(sprite, kurt.Stage):
             pos = (0, 0)
@@ -127,6 +126,11 @@ class PygameScreen(skip.Screen):
             angle = -(sprite.direction - 90)
             scale = sprite.size / 100
             surface = pygame.transform.rotozoom(surface, angle, scale)
+
+        if offset:
+            (ox, oy) = offset
+            (x, y) = pos
+            pos = (x + ox, y + oy)
 
         ghost = sprite.graphic_effects['ghost']
         if ghost != 0:
@@ -140,6 +144,20 @@ class PygameScreen(skip.Screen):
 
     def pos_from_screen(self, (x, y)):
         return (x - 240, 180 - y)
+
+    def draw_stage_without_sprite(self, sprite):
+        rect = skip.bounds(sprite)
+        (x, y) = self.pos_to_screen(rect.topleft)
+        offset = (-x, -y)
+        surface = pygame.Surface(rect.size).convert_alpha()
+        self.draw_sprite(self.project.stage, surface, offset)
+        surface.blit(self.pen_surface, (0, 0))
+        for actor in self.project.actors:
+            if actor is not sprite:
+                if isinstance(actor, kurt.Scriptable):
+                    if actor.is_visible:
+                        self.draw_sprite(actor, surface, offset)
+        return surface
 
     # ScriptEvent handlers
 
@@ -172,21 +190,22 @@ class PygameScreen(skip.Screen):
     def touching_sprite(self, sprite, other):
         mask = self.masks[sprite.costume.image]
         other_mask = self.masks[other.costume.image]
-        (x, y) = self.pos_to_screen(skip.bounds(sprite).topleft)
         (ox, oy) = self.pos_to_screen(skip.bounds(other).topleft)
         offset = (int(ox - x), int(oy - y))
         return bool(mask.overlap(other_mask, offset))
 
     def touching_color(self, sprite, color):
-        mask = self.masks[sprite.costume.image]
-        (x, y) = self.pos_to_screen(skip.bounds(sprite).topleft)
-        surface = self.surfaces[self.project.stage.costume.image]
-        if color_mask(surface, color).overlap(mask, (int(x), int(y))):
-            return True
-        return False # TODO
+        stage_surface = self.draw_stage_without_sprite(sprite)
+        stage_mask = color_mask(stage_surface, color)
+        sprite_mask = self.masks[sprite.costume.image]
+        return bool(stage_mask.overlap(sprite_mask, (0, 0)))
 
     def touching_color_over(self, sprite, color, over):
-        return False # TODO
+        stage_surface = self.draw_stage_without_sprite(sprite)
+        stage_mask = color_mask(stage_surface, over)
+        sprite_surface = self.surfaces[sprite.costume.image]
+        sprite_mask = color_mask(sprite_surface, color)
+        return bool(stage_mask.overlap(sprite_mask, (0, 0)))
 
     def ask(self, scriptable, prompt):
         # sync: yield while waiting for answer.

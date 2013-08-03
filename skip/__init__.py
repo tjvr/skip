@@ -157,6 +157,7 @@ class Interpreter(object):
                     self.drag_offset = (x - mx, y - my)
                     self.drag_sprite = scriptable
                     self.has_dragged = False
+                    go_to_front(scriptable)
                 else:
                     self.trigger_scriptable_hats(scriptable, "whenClicked")
 
