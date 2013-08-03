@@ -11,6 +11,7 @@ import skip
 from skip import Rect, ScreenEvent
 
 
+# TODO pen drawing
 # TODO touching colors
 # TODO text: say, ask, variable/list watchers
 # TODO sound
