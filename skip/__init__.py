@@ -135,8 +135,12 @@ class Interpreter(object):
             self.threads[script].finish()
         thread = Thread(self.run_script(scriptable, script),
                                       scriptable, callback)
-        self.threads[script] = thread
+        self.new_threads[script] = thread
         return thread
+
+    def add_new_threads(self):
+        self.threads.update(self.new_threads)
+        self.new_threads = {}
 
     def tick(self, events):
         """Execute one frame of the interpreter.
@@ -144,6 +148,8 @@ class Interpreter(object):
         Don't call more than 40 times per second.
 
         """
+        self.add_new_threads()
+
         if self.drag_sprite:
             (mx, my) = self.screen.get_mouse_pos()
             (ox, oy) = self.drag_offset
@@ -213,9 +219,12 @@ class Interpreter(object):
             else:
                 break
 
+        self.add_new_threads()
+
     def stop(self):
         """Stop running threads."""
         self.threads = {}
+        self.new_threads = {}
         self.answer = ""
         self.ask_lock = False
 
@@ -273,18 +282,14 @@ class Interpreter(object):
 
         if insert:
             if isinstance(value, basestring):
-                if insert.shape in ("string", "readonly-menu"):
-                    value = unicode(value)
-                elif insert.shape == "number":
+                value = unicode(value)
+
+                if insert.shape in ("number", "number-menu", "string"):
                     try:
                         value = float(value)
                     except (TypeError, ValueError):
-                        value = 0
-                elif insert.shape == "number-menu":
-                    try:
-                        value = float(value)
-                    except (TypeError, ValueError):
-                        pass
+                        if insert.shape == "number":
+                            value = 0
 
             if isinstance(value, float) and value == int(value):
                 value = int(value)
@@ -547,8 +552,14 @@ def command(bt):
         return func
     return decorator
 
-def operator(bt, func):
+def operator(bt, func, arg_types=None):
     def wrapped(s, *args):
+        if arg_types:
+            cast_args = []
+            for (arg, type_) in zip(args, arg_types):
+                arg = type_(arg)
+                cast_args.append(arg)
+            args = cast_args
         try:
             return func(*args)
         except IndexError:
@@ -900,7 +911,6 @@ def broadcast_and_wait(s, message):
     while threads:
         yield
 
-
 @command("if")
 def if_(s, condition, body):
     if condition:
@@ -929,6 +939,13 @@ def repeat_until(s, condition, body):
 def stop_script(s, which):
     yield ScriptEvent(s, 'stop', which)
 
+@command("all at once")
+def all_at_once(s, body):
+    for x in s.project.interpreter.run_script(s, body):
+        if x:
+            yield x
+    yield
+
 ## Sensing
 
 def bounds(s):
@@ -938,7 +955,15 @@ def bounds(s):
     assert rect.top == ry
 
     # scale
-    rect.scale_ip(s.size / 100.0)
+    scale = s.size / 100.0
+    (x, y) = rect.bottomleft
+    (x2, y2) = rect.topright
+    x *= scale
+    y *= scale
+    x2 *= scale
+    y2 *= scale
+    (w, h) = (x2 - x, y2 - y)
+    rect = Rect(x, y, w, h)
 
     # rotate
     theta = math.radians(s.direction)
@@ -1065,9 +1090,9 @@ operator("and", op.and_)
 operator("or", op.or_)
 operator("not", op.not_)
 
-operator("join", op.add)
-operator("letter of", lambda i, string: string[int(i - 1)])
-operator("stringLength:", len)
+operator("join", op.add, [unicode, unicode])
+operator("letter of", lambda i, string: string[i - 1], [int, unicode])
+operator("stringLength:", len, [unicode])
 
 operator("mod", op.mod)
 operator("round", round)
