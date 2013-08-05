@@ -1,3 +1,8 @@
+# Scratch files
+*.sb
+*.sb2
+
+# Python
 *.py[cod]
 
 # C extensions
