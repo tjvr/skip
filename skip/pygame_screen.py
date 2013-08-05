@@ -260,7 +260,11 @@ class PygameScreen(skip.Screen):
     def stop_sounds(self):
         pass # TODO
 
+    def play_note(self, drum, duration):
+        pass
 
+    def play_drum(self, drum, duration):
+        pass
 
 if __name__ == "__main__":
     project = None

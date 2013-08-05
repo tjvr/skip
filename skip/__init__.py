@@ -537,6 +537,12 @@ class Screen(object):
     def stop_sounds(self):
         pass
 
+    def play_note(self, drum, duration):
+        pass
+
+    def play_drum(self, drum, duration):
+        pass
+
 
 
 #-- Commands --#
