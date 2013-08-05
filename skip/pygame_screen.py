@@ -266,10 +266,16 @@ class PygameScreen(skip.Screen):
     def play_drum(self, drum, duration):
         pass
 
-if __name__ == "__main__":
+
+
+def main():
     project = None
     if len(sys.argv) == 2:
         project = kurt.Project.load(sys.argv[1])
 
     skip.main(project, PygameScreen())
 
+
+
+if __name__ == "__main__":
+    main()
